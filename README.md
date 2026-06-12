@@ -6,12 +6,12 @@ ltdmerge is a tool to streamline the process of creating new items in the Mii ed
 
 ## Creating a mod
 
+> [!NOTE]
+> Passing in `--icon` is optional, it will simply use an existing icon from the game instead when omitted.
+
 ```sh
 ltdmerge add --base /path/to/game/romfs --model /path/to/custom_model --icon /path/to/your_png --out /path/to/output_dir
 ```
-
-> [!NOTE]
-> Passing in --icon is fully optional, it will simply use an existing icon from the game instead.
 
 ## Merging mods
 
