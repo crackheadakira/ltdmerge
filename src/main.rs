@@ -47,7 +47,7 @@ enum Command {
         #[arg(long)]
         icon: Option<PathBuf>,
 
-        /// Output directory for the generated mod (romfs layout).
+        /// Output directory for the generated mod.
         #[arg(short, long)]
         out: PathBuf,
 

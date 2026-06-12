@@ -14,7 +14,7 @@ pub fn run(mod_dirs: Vec<PathBuf>, out_dir: PathBuf) -> Result<()> {
         bail!("merge requires at least two input mod directories");
     }
 
-    println!("Merging {} mods → {}", mod_dirs.len(), out_dir.display());
+    println!("Merging {} mods -> {}", mod_dirs.len(), out_dir.display());
 
     let mut custom_mods = Vec::new();
     for (idx, dir) in mod_dirs.iter().enumerate() {
