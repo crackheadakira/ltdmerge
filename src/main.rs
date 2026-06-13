@@ -9,6 +9,7 @@ mod util;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
+use serde::Deserialize;
 use std::path::PathBuf;
 
 use crate::categories::{FacelineDef, HairFrontDef};
@@ -37,6 +38,37 @@ impl AssetCategory {
             AssetCategory::HairFront => Box::new(HairFrontDef),
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ModManifest {
+    pub base_romfs_path: PathBuf,
+    pub output_path: PathBuf,
+    pub assets: Vec<AssetSpec>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "category", rename_all = "camelCase")]
+pub enum AssetSpec {
+    Faceline(FacelineSpec),
+    HairFront(HairFrontSpec),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FacelineSpec {
+    pub asset_source: PathBuf,
+    pub icon_source: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HairFrontSpec {
+    pub asset_source: PathBuf,
+    pub hat_asset_source: Option<PathBuf>,
+    pub icon_source: Option<PathBuf>,
+    pub phcl_source: Option<PathBuf>,
+    pub hat_phcl_source: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
