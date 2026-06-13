@@ -45,13 +45,14 @@ impl PartsEntry {
             }
         }
 
-        if let Some(ref icon) = self.editor_icon_name {
-            if !cat.is_vanilla_icon(icon) {
-                let old_num: String = icon.chars().filter(|c| c.is_ascii_digit()).collect();
-                if !old_num.is_empty() {
-                    self.editor_icon_name = Some(icon.replace(&old_num, &new_index.to_string()));
-                }
-            }
+        self.editor_icon_name = Some(cat.editor_icon_name(new_index as u32));
+
+        if let Some(Value::String(icon)) = self.rstbl_raw.get_mut("EditorIconName") {
+            *icon = cat.editor_icon_name(new_index as u32);
+        }
+
+        if let Some(Value::String(icon)) = self.pack_raw.get_mut("EditorIconName") {
+            *icon = cat.editor_icon_name(new_index as u32);
         }
 
         self.flush_to_raw(old_model_token, new_model_token);
@@ -162,7 +163,6 @@ pub trait CategoryDef: Send + Sync {
     fn category_name(&self) -> &str;
     fn parts_type_hash(&self) -> u32;
     fn vanilla_max_parts_index(&self) -> i32;
-    fn vanilla_entry_count(&self) -> u32;
     fn part_name(&self, index: u32) -> String;
     fn row_id(&self, index: u32) -> String;
 
@@ -171,13 +171,6 @@ pub trait CategoryDef: Send + Sync {
     fn matches_icon_name(&self, tex_name: &str) -> bool;
     fn editor_icon_name(&self, index: u32) -> String;
     fn path_parts_order(&self) -> &str;
-
-    fn is_vanilla_icon(&self, icon: &str) -> bool {
-        let num: String = icon.chars().filter(|c| c.is_ascii_digit()).collect();
-        num.parse::<u32>()
-            .map(|n| n <= self.vanilla_max_parts_index() as u32)
-            .unwrap_or(false)
-    }
 
     /// Checks if a global BNTX texture name pattern belongs to this category.
     fn matches_texture_name(&self, _tex_name: &str) -> bool {

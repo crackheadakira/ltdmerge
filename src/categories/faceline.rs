@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 use tomolib::formats::byml::Value;
 
 const VANILLA_MAX_PARTS: i32 = 21;
-const VANILLA_ENTRY_COUNT: u32 = 15;
 const FALLBACK_ICON: &str = "MiiEditor_Face_Faceline15_Uit";
 
 pub struct FacelineDef;
@@ -20,10 +19,6 @@ impl CategoryDef for FacelineDef {
 
     fn vanilla_max_parts_index(&self) -> i32 {
         VANILLA_MAX_PARTS
-    }
-
-    fn vanilla_entry_count(&self) -> u32 {
-        VANILLA_ENTRY_COUNT
     }
 
     fn part_name(&self, index: u32) -> String {
@@ -56,20 +51,6 @@ impl CategoryDef for FacelineDef {
 
     fn editor_icon_name(&self, index: u32) -> String {
         format!("MiiEditor_Face_{}_Uit", self.part_name(index))
-    }
-
-    fn is_vanilla_icon(&self, icon: &str) -> bool {
-        if let Some(pos) = icon.find("Faceline") {
-            let num: String = icon[pos + 8..]
-                .chars()
-                .take_while(|c| c.is_ascii_digit())
-                .collect();
-
-            if let Ok(n) = num.parse::<u32>() {
-                return n <= self.vanilla_entry_count();
-            }
-        }
-        false
     }
 
     fn parse_rstbl_entry(&self, val: &Value) -> Result<Option<PartsEntry>> {
@@ -110,15 +91,6 @@ mod tests {
             cat.pack_path("Faceline22"),
             "Mii/Parts/Faceline22.mii__Parts.bgyml"
         );
-    }
-
-    #[test]
-    fn vanilla_icon_detection() {
-        let cat = FacelineDef;
-
-        assert!(cat.is_vanilla_icon("MiiEditor_Face_Faceline15_Uit"));
-        assert!(!cat.is_vanilla_icon("MiiEditor_Face_Faceline16_Uit"));
-        assert!(!cat.is_vanilla_icon("MiiEditor_Face_Faceline22_Uit"));
     }
 
     #[test]

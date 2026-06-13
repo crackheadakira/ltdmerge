@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
-use crate::categories::FacelineDef;
+use crate::categories::{FacelineDef, HairFrontDef};
 use crate::category::CategoryDef;
 
 #[derive(Parser)]
@@ -27,18 +27,14 @@ struct Cli {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
 enum AssetCategory {
     Faceline,
-    Eye,
-    Mouth,
-    Beard,
+    HairFront,
 }
 
 impl AssetCategory {
     fn into_trait_object(self) -> Box<dyn CategoryDef> {
         match self {
             AssetCategory::Faceline => Box::new(FacelineDef),
-            // AssetCategory::Mouth => Box::new(MouthDef),
-            // AssetCategory::Beard => Box::new(BeardDef),
-            _ => Box::new(FacelineDef),
+            AssetCategory::HairFront => Box::new(HairFrontDef),
         }
     }
 }
@@ -95,7 +91,7 @@ fn main() -> Result<()> {
         Command::Merge { mods, out } => {
             let active_categories: Vec<Box<dyn CategoryDef>> = vec![
                 Box::new(FacelineDef),
-                // Box::new(MouthDef),
+                Box::new(HairFrontDef),
                 // Box::new(BeardDef),
             ];
 

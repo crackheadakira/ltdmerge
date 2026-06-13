@@ -73,7 +73,7 @@ pub fn run(
     let template = find_template_entry(&rstbl_doc, cat.category_name())?;
     let mut entry = cat.new_entry(
         next_index,
-        initial_model_fmdb,
+        initial_model_fmdb.clone(),
         Some(editor_icon_name.clone()),
         &template,
     );
@@ -90,11 +90,9 @@ pub fn run(
         );
         model_bfres.name = target_internal_token.clone();
 
-        let model_internal_mesh_name = &model_bfres.models.names[0];
-        let mesh_path = format!(
-            "Work/Model/Mii/MiiHead/{target_internal_token}/output/{model_internal_mesh_name}.fmdb"
-        );
-        entry.model_paths.push(mesh_path);
+        if !initial_model_fmdb.is_empty() {
+            entry.model_paths.push(initial_model_fmdb);
+        }
 
         let target_bfres_filename = format!("{target_internal_token}.bfres");
         let out_model_relative_path = format!("Model/{target_bfres_filename}.zs");
