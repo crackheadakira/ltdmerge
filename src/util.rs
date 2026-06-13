@@ -7,11 +7,7 @@ pub const PATH_MII_PARTS_PACK: &str = "Pack/MiiParts.pack.zs";
 pub const PATH_RSTBL_BYML: &str = "RSDB/MiiParts.Product.100.rstbl.byml.zs";
 pub const PATH_RSIZETABLE: &str =
     "System/Resource/ResourceSizeTable.Product.100.Nin_NX_NVN.rsizetable.zs";
-pub const PATH_PARTS_ORDER: &str = "Mii/PartsOrder/Faceline.mii__PartsOrder.bgyml";
 pub const PATH_MII_EDITOR_ICON: &str = "Tex/Pack/MiiEditorIcon.bntx.zs";
-
-pub const VANILLA_INDICES: i32 = 21;
-pub const VANILLA_HEADS: u32 = 15;
 
 /// Returns true if a romfs path is zstd-compressed (i.e. ends with .zs).
 pub fn is_zs(path: &str) -> bool {
@@ -46,11 +42,6 @@ pub fn compress_and_write(out: &std::path::Path, rel: &str, bytes: &[u8]) -> Res
     std::fs::write(&dest, &data).with_context(|| format!("writing {}", dest.display()))?;
     println!("wrote {rel}");
     Ok(bytes.len())
-}
-
-/// Sub-path inside MiiParts.pack for a given faceline name.
-pub fn pack_parts_path(name: &str) -> String {
-    format!("Mii/Parts/{name}.mii__Parts.bgyml")
 }
 
 pub fn zs_decompress(bytes: &[u8]) -> Result<Vec<u8>> {
