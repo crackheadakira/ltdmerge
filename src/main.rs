@@ -1,19 +1,14 @@
-mod add;
-mod categories;
-mod category;
-mod engine;
-mod merge;
-mod rstbl;
-mod types;
-mod util;
-
-use anyhow::{Context, Result};
-use clap::{Parser, Subcommand, ValueEnum};
-use serde::Deserialize;
+use anyhow::{Context, Result, bail};
+use clap::{Parser, Subcommand};
+use std::io::Read;
 use std::path::PathBuf;
 
-use crate::categories::{FacelineDef, HairFrontDef};
-use crate::category::CategoryDef;
+use ltdmerge::categories::{EyeDef, FacelineDef, HairFrontDef};
+use ltdmerge::manifest::AddManifest;
+use ltdmerge::registry::CategoryRegistry;
+
+use ltdmerge::add;
+use ltdmerge::merge;
 
 #[derive(Parser)]
 #[command(name = "ltdmerge")]
@@ -25,55 +20,10 @@ struct Cli {
     command: Command,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-enum AssetCategory {
-    Faceline,
-    HairFront,
-}
-
-impl AssetCategory {
-    fn into_trait_object(self) -> Box<dyn CategoryDef> {
-        match self {
-            AssetCategory::Faceline => Box::new(FacelineDef),
-            AssetCategory::HairFront => Box::new(HairFrontDef),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ModManifest {
-    pub base_romfs_path: PathBuf,
-    pub output_path: PathBuf,
-    pub assets: Vec<AssetSpec>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "category", rename_all = "camelCase")]
-pub enum AssetSpec {
-    Faceline(FacelineSpec),
-    HairFront(HairFrontSpec),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FacelineSpec {
-    pub asset_source: PathBuf,
-    pub icon_source: Option<PathBuf>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct HairFrontSpec {
-    pub asset_source: PathBuf,
-    pub hat_asset_source: Option<PathBuf>,
-    pub icon_source: Option<PathBuf>,
-    pub phcl_source: Option<PathBuf>,
-    pub hat_phcl_source: Option<PathBuf>,
-}
-
 #[derive(Subcommand)]
 enum Command {
-    /// Merge N input mods into a single output mod, resolving collisions across all categories automatically.
+    /// Merge N input mods into a single output mod, resolving index collisions
+    /// across all categories automatically.
     Merge {
         /// Input mod directories (romfs layout). At least two required.
         #[arg(required = true, num_args = 2..)]
@@ -84,36 +34,29 @@ enum Command {
         out: PathBuf,
     },
 
-    /// Add a new custom asset to a mod directory (or create one from scratch).
+    /// Add one or more custom assets to a mod directory from a JSON manifest.
+    ///
+    /// Pass a file path or `-` to read from stdin.
     Add {
-        /// Path to your romfs dump (read-only, used as the base reference layout).
+        /// Path to your romfs dump (read-only base reference layout).
         #[arg(long)]
         base: PathBuf,
-
-        /// The category type of the asset you are adding.
-        #[arg(short, long, value_enum)]
-        category: AssetCategory,
-
-        /// Path to the asset file.
-        /// For Faceline/Hair: Path to the .bfres model.
-        /// For Eyes/Mouths/Beards: Path to a loose .png or raw texture file.
-        #[arg(long)]
-        model: String,
-
-        /// Path to your custom .png preview icon file (for MiiEditorIcon.bntx).
-        /// Omit to skip icon injection and use a default fallback.
-        #[arg(long)]
-        icon: Option<PathBuf>,
 
         /// Output directory for the generated mod content.
         #[arg(short, long)]
         out: PathBuf,
 
-        /// Custom sorting placement where the asset appears in the editor.
-        /// Defaults to appending after all existing entries.
-        #[arg(long)]
-        order_index: Option<usize>,
+        /// Path to the JSON manifest file, or `-` to read from stdin.
+        manifest: PathBuf,
     },
+}
+
+fn build_registry() -> CategoryRegistry {
+    let mut registry = CategoryRegistry::new();
+    registry.register(FacelineDef);
+    registry.register(HairFrontDef);
+    registry.register(EyeDef);
+    registry
 }
 
 fn main() -> Result<()> {
@@ -121,29 +64,56 @@ fn main() -> Result<()> {
 
     match cli.command {
         Command::Merge { mods, out } => {
-            let active_categories: Vec<Box<dyn CategoryDef>> = vec![
-                Box::new(FacelineDef),
-                Box::new(HairFrontDef),
-                // Box::new(BeardDef),
-            ];
+            let registry = build_registry();
+            let categories = registry.into_all();
 
-            merge::run(mods, out, active_categories)
+            merge::run(mods, out, categories)
                 .context("Failed to merge custom asset modifications")?;
         }
+
         Command::Add {
             base,
-            category,
-            model,
-            icon,
             out,
-            order_index,
+            manifest,
         } => {
-            let selected_cat = category.into_trait_object();
+            let json = read_manifest_source(&manifest)
+                .with_context(|| format!("reading manifest '{}'", manifest.display()))?;
 
-            add::run(base, selected_cat, model, icon, out, order_index)
-                .context("Failed to register and inject additive asset entry")?;
+            let manifest = AddManifest::from_json(&json)?;
+
+            if manifest.assets.is_empty() {
+                bail!("manifest contains no assets");
+            }
+
+            let registry = build_registry();
+
+            for spec in &manifest.assets {
+                if registry.get(&spec.category).is_none() {
+                    bail!(
+                        "unknown category '{}', registered categories are: {}",
+                        spec.category,
+                        registry.known_names().join(", ")
+                    );
+                }
+            }
+
+            add::run(&base, &out, &manifest, &registry)
+                .context("Failed to register and inject additive asset entries")?;
         }
     }
 
     Ok(())
+}
+
+fn read_manifest_source(path: &PathBuf) -> Result<String> {
+    if path.as_os_str() == "-" {
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .context("reading manifest from stdin")?;
+        Ok(buf)
+    } else {
+        std::fs::read_to_string(path)
+            .with_context(|| format!("reading manifest file '{}'", path.display()))
+    }
 }

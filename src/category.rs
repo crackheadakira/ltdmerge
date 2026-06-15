@@ -1,4 +1,6 @@
+use crate::params::AssetParams;
 use anyhow::Result;
+use schemars::Schema;
 use std::collections::BTreeMap;
 use tomolib::formats::byml::Value;
 
@@ -14,7 +16,6 @@ pub struct PartsEntry {
     pub editor_icon_name: Option<String>,
 
     /// The primary model path strings that need index-renaming.
-
     /// On remap we run a string-replace across all of them simultaneously.
     pub model_paths: Vec<String>,
 
@@ -50,25 +51,42 @@ impl PartsEntry {
         if let Some(Value::String(icon)) = self.rstbl_raw.get_mut("EditorIconName") {
             *icon = cat.editor_icon_name(new_index as u32);
         }
-
         if let Some(Value::String(icon)) = self.pack_raw.get_mut("EditorIconName") {
             *icon = cat.editor_icon_name(new_index as u32);
         }
 
-        self.flush_to_raw(old_model_token, new_model_token);
+        self.flush_to_raw(old_model_token, new_model_token, cat);
     }
 
-    /// Write the engine-owned fields back into `rstbl_raw` and `pack_raw` safely.
-    pub fn flush_to_raw(&mut self, old_model_token: &str, new_model_token: &str) {
+    /// Write the engine-owned fields back into `rstbl_raw` and `pack_raw`.
+    ///
+    /// Stamps the universal fields (FileName, PartsIndex, EditorIconName, __RowId),
+    /// then asks the category for any extra index-derived string fields to overwrite,
+    /// then runs smart_path_replace across all values.
+    pub fn flush_to_raw(
+        &mut self,
+        old_model_token: &str,
+        new_model_token: &str,
+        cat: &dyn CategoryDef,
+    ) {
+        let extra = cat.extra_index_fields(self.parts_index as u32);
+
         for map in [&mut self.rstbl_raw, &mut self.pack_raw] {
             if map.is_empty() {
                 continue;
             }
+
             map.insert("FileName".into(), Value::String(self.file_name.clone()));
             map.insert("PartsIndex".into(), Value::I32(self.parts_index));
 
             if let Some(ref icon) = self.editor_icon_name {
                 map.insert("EditorIconName".into(), Value::String(icon.clone()));
+            }
+
+            for (key, value) in &extra {
+                if map.contains_key(*key) {
+                    map.insert(key.to_string(), Value::String(value.clone()));
+                }
             }
         }
 
@@ -77,51 +95,63 @@ impl PartsEntry {
                 .insert("__RowId".into(), Value::String(self.row_id.clone()));
         }
 
+        let extra_keys = cat.extra_remappable_string_keys();
         for map in [&mut self.rstbl_raw, &mut self.pack_raw] {
             if map.is_empty() {
                 continue;
             }
-
-            for sub_val in map.values_mut() {
+            for (key, sub_val) in map.iter_mut() {
+                let is_extra_key = extra_keys.contains(&key.as_str());
                 Self::smart_path_replace(
                     sub_val,
                     old_model_token,
                     new_model_token,
                     self.parts_index,
+                    is_extra_key,
                 );
             }
         }
     }
 
-    fn smart_path_replace(val: &mut Value, old: &str, new: &str, new_index: i32) {
+    fn smart_path_replace(
+        val: &mut Value,
+        old: &str,
+        new: &str,
+        new_index: i32,
+        force_digit_rebuild: bool,
+    ) {
         match val {
             Value::String(s) => {
                 if !old.is_empty() && s.contains(old) {
                     *s = s.replace(old, new);
                 } else if old.is_empty()
-                    && (s.contains("Work/Model/") || s.contains(".fmdb") || s.contains(".phcl"))
+                    && (force_digit_rebuild
+                        || s.contains("Work/Model/")
+                        || s.contains(".fmdb")
+                        || s.contains(".phcl"))
                 {
                     *s = Self::rebuild_path_digits(s, new_index);
                 }
             }
+
             Value::Dict(map) => {
                 for sub_val in map.values_mut() {
-                    Self::smart_path_replace(sub_val, old, new, new_index);
+                    Self::smart_path_replace(sub_val, old, new, new_index, false);
                 }
             }
+
             Value::Array(arr) => {
                 for sub_val in arr.iter_mut() {
-                    Self::smart_path_replace(sub_val, old, new, new_index);
+                    Self::smart_path_replace(sub_val, old, new, new_index, false);
                 }
             }
             _ => {}
         }
     }
 
-    /// Extracts the digits from a asset path component and replaces them with the accurate target index formatting
     fn rebuild_path_digits(path: &str, new_index: i32) -> String {
         let segments: Vec<&str> = path.split('/').collect();
-        let mut updated_segments = Vec::new();
+        let mut updated = Vec::new();
 
         for segment in segments {
             if segment.starts_with("MiiHead") || segment.starts_with("MiiHair") {
@@ -129,25 +159,26 @@ impl PartsEntry {
                     .chars()
                     .take_while(|c| !c.is_ascii_digit())
                     .collect();
+
                 let suffix: String = segment
                     .chars()
                     .skip_while(|c| !c.is_ascii_digit())
                     .skip_while(|c| c.is_ascii_digit())
                     .collect();
 
-                let formatted_idx = if prefix.contains("HairAll") {
+                let formatted = if prefix.contains("HairAll") {
                     format!("{:03}", new_index)
                 } else {
                     format!("{:02}", new_index)
                 };
 
-                updated_segments.push(format!("{}{}{}", prefix, formatted_idx, suffix));
+                updated.push(format!("{}{}{}", prefix, formatted, suffix));
             } else {
-                updated_segments.push(segment.to_string());
+                updated.push(segment.to_string());
             }
         }
 
-        updated_segments.join("/")
+        updated.join("/")
     }
 
     pub fn build_rstbl_value(&self) -> Value {
@@ -159,26 +190,43 @@ impl PartsEntry {
     }
 }
 
+pub struct CompiledAsset {
+    pub pack_files: BTreeMap<String, Vec<u8>>,
+
+    /// Loose files that need to be written to romfs
+    pub romfs_files: BTreeMap<String, Vec<u8>>,
+}
+
 pub trait CategoryDef: Send + Sync {
     fn category_name(&self) -> &str;
     fn parts_type_hash(&self) -> u32;
     fn vanilla_max_parts_index(&self) -> i32;
     fn part_name(&self, index: u32) -> String;
     fn row_id(&self, index: u32) -> String;
-
     fn vanilla_icon_fallback(&self) -> &str;
-
     fn matches_icon_name(&self, tex_name: &str) -> bool;
     fn editor_icon_name(&self, index: u32) -> String;
     fn path_parts_order(&self) -> &str;
+    fn pack_path(&self, file_name: &str) -> String;
+    fn internal_model_name(&self, index: u32) -> String;
 
     /// Checks if a global BNTX texture name pattern belongs to this category.
     fn matches_texture_name(&self, _tex_name: &str) -> bool {
         false
     }
 
-    fn pack_path(&self, file_name: &str) -> String;
-    fn internal_model_name(&self, index: u32) -> String;
+    /// Additional index-derived string fields to stamp during [`PartsEntry::flush_to_raw`],
+    /// beyond the universal set (FileName, PartsIndex, EditorIconName, __RowId).
+    fn extra_index_fields(&self, _index: u32) -> Vec<(&'static str, String)> {
+        vec![]
+    }
+
+    /// Top-level string keys whose values contain the index token and must be
+    /// updated by [`PartsEntry::flush_to_raw`]'s digit-rebuild pass, even though
+    /// they are not model/path strings.
+    fn extra_remappable_string_keys(&self) -> &[&'static str] {
+        &[]
+    }
 
     /// Parse one element of the flat rstbl.byml array.
     fn parse_rstbl_entry(&self, val: &Value) -> Result<Option<PartsEntry>>;
@@ -196,14 +244,31 @@ pub trait CategoryDef: Send + Sync {
         build_from_raw(&entry.pack_raw, entry)
     }
 
+    /// Parse category-specific asset parameters from the manifest JSON blob.
+    fn parse_asset_params(&self, params: &serde_json::Value) -> Result<Box<dyn AssetParams>>;
+
+    fn compile_asset(
+        &self,
+        index: u32,
+        target_token: &str,
+        params: &mut dyn AssetParams,
+    ) -> Result<CompiledAsset> {
+        Ok(CompiledAsset {
+            pack_files: BTreeMap::new(),
+            romfs_files: BTreeMap::new(),
+        })
+    }
+
     /// Build a brand-new PartsEntry for the `add` command.
     fn new_entry(
         &self,
         index: u32,
-        model_fmdb: String,
         editor_icon_name: Option<String>,
+        params: &dyn AssetParams,
         rstbl_template: &BTreeMap<String, Value>,
-    ) -> PartsEntry {
+    ) -> Result<PartsEntry> {
+        let model_fmdb = params.primary_source().to_string();
+
         let file_name = self.part_name(index);
         let row_id = self.row_id(index);
         let icon = editor_icon_name
@@ -215,11 +280,16 @@ pub trait CategoryDef: Send + Sync {
             "Category".into(),
             Value::String(self.category_name().into()),
         );
-
         rstbl_raw.insert("FileName".into(), Value::String(file_name.clone()));
         rstbl_raw.insert("PartsIndex".into(), Value::I32(index as i32));
         rstbl_raw.insert("__RowId".into(), Value::String(row_id.clone()));
         rstbl_raw.insert("EditorIconName".into(), Value::String(icon.clone()));
+
+        for (key, value) in self.extra_index_fields(index) {
+            if rstbl_raw.contains_key(key) {
+                rstbl_raw.insert(key.to_string(), Value::String(value));
+            }
+        }
 
         if !model_fmdb.is_empty() {
             if let Some(Value::Dict(mu)) = rstbl_raw.get_mut("ModelUnit") {
@@ -244,7 +314,7 @@ pub trait CategoryDef: Send + Sync {
             pack_raw.insert("ModelUnit".into(), Value::Dict(mu));
         }
 
-        PartsEntry {
+        Ok(PartsEntry {
             parts_index: index as i32,
             file_name,
             row_id,
@@ -256,8 +326,10 @@ pub trait CategoryDef: Send + Sync {
             },
             rstbl_raw,
             pack_raw,
-        }
+        })
     }
+
+    fn json_schema(&self) -> Schema;
 }
 
 pub fn extract_entry_fields(
@@ -272,7 +344,6 @@ pub fn extract_entry_fields(
     };
 
     let mut model_paths = Vec::new();
-
     collect_model_paths_recursive(Value::Dict(map.clone()), &mut model_paths);
 
     (file_name, row_id, editor_icon_name, model_paths)
