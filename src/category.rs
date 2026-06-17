@@ -1,32 +1,271 @@
 use crate::params::AssetParams;
 use anyhow::Result;
+use ltdmerge_derive::ToByml;
 use schemars::Schema;
 use std::collections::BTreeMap;
 use tomolib::formats::byml::Value;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, ToByml)]
 pub struct PartsEntry {
-    pub parts_index: i32,
-    pub file_name: String,
+    #[byml(key = "__RowId")]
     pub row_id: String,
 
-    /// Value of "EditorIconName" in both documents.
-    ///
-    /// `None` means the entry had no icon or we should use the vanilla fallback.
+    pub category: String,
+    pub file_name: String,
+
+    #[byml(default = -1)]
+    pub parts_index: i32,
+
+    // TODO: make enum, but just mmh3 of category
+    #[byml(default = 0)]
+    pub parts_type: u32,
+
+    #[byml(default = false)]
+    pub is_visible_in_editor: bool,
+
+    #[byml(default = true)]
+    pub is_selectable_color: bool,
+
+    #[byml(default = false)]
+    pub is_selectable_sub_color: bool,
+
     pub editor_icon_name: Option<String>,
 
-    /// The primary model path strings that need index-renaming.
-    /// On remap we run a string-replace across all of them simultaneously.
-    pub model_paths: Vec<String>,
+    #[byml(skip_none)]
+    pub editor_mask_icon_name: Option<String>,
 
-    /// The full RSTBL dict as parsed.
-    pub rstbl_raw: BTreeMap<String, Value>,
+    #[byml(via = "hash_u32", default = 0)]
+    pub hair_gender: HairGender,
 
-    /// The full pack bgyml dict as parsed from MiiParts.pack.
-    pub pack_raw: BTreeMap<String, Value>,
+    #[byml(skip_none)]
+    pub baby_hair_name_father_male: Option<String>,
+
+    #[byml(skip_none)]
+    pub baby_hair_name_father_female: Option<String>,
+
+    #[byml(skip_none)]
+    pub baby_hair_name_mother_male: Option<String>,
+
+    #[byml(skip_none)]
+    pub baby_hair_name_mother_female: Option<String>,
+
+    #[byml(default = false)]
+    pub is_use_hair_parts_model: bool,
+
+    #[byml(skip_none)]
+    pub texture_name: Option<String>,
+
+    #[byml(skip_none)]
+    pub no_lip_texture_name: Option<String>,
+
+    #[byml(default = false)]
+    pub use_texture_color: bool,
+
+    #[byml(default = false)]
+    pub is_flippable: bool,
+
+    #[byml(default = false)]
+    pub is_attachable_hair_front: bool,
+
+    #[byml(default = false)]
+    pub is_attachable_hair_parts_upper: bool,
+
+    #[byml(default = false)]
+    pub is_attachable_hair_parts_middle: bool,
+
+    #[byml(default = false)]
+    pub is_attachable_hair_parts_lower: bool,
+
+    #[byml(default = false)]
+    pub is_mouth_open: bool,
+
+    #[byml(default = false)]
+    pub is_enable_mouth_lip_default: bool,
+
+    pub rotate_axis: Vector2f,
+
+    #[byml(default = 0)]
+    pub offset_rotate: i32,
+
+    #[byml(default = 18)]
+    pub max_trans_x: i32,
+
+    #[byml(default = 0)]
+    pub min_trans_y: i32,
+
+    #[byml(default = 31)]
+    pub max_trans_y: i32,
+
+    #[byml(default = 0)]
+    pub default_scale: i32,
+
+    #[byml(default = 3)]
+    pub default_aspect: i32,
+
+    #[byml(default = 0)]
+    pub default_trans_x: i32,
+
+    #[byml(default = 0)]
+    pub default_trans_y: i32,
+
+    pub axis_for_expression: Vector2f,
+
+    pub size_for_expression: f32,
+
+    #[byml(default = BTreeMap::new())]
+    pub components: BTreeMap<String, Value>,
+    #[byml(default = BTreeMap::new())]
+    pub components_hash: BTreeMap<String, Value>,
+    pub model_unit: PartsModelUnitParam,
+
+    #[byml(skip_none)]
+    pub model_unit_for_hat: Option<PartsModelUnitParam>,
+
+    #[byml(skip_none)]
+    pub flipped_model_unit: Option<PartsModelUnitParam>,
+
+    #[byml(skip_none)]
+    pub flipped_model_unit_for_hat: Option<PartsModelUnitParam>,
+
+    #[byml(default = BTreeMap::new())]
+    pub hair_parts_model_unit: BTreeMap<HairPartType, PartsModelUnitParam>,
+
+    #[byml(default = BTreeMap::new())]
+    pub hair_parts_model_unit_for_hat: BTreeMap<HairPartType, PartsModelUnitParam>,
+
+    #[byml(default = Vec::new())]
+    pub hair_parts_attach_info: Vec<HairPartsAttachInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HairGender {
+    Both,
+    Male,
+    Female,
+}
+
+impl HairGender {
+    pub fn hash_u32(&self) -> u32 {
+        match self {
+            Self::Both => 0xa9021713,
+            Self::Male => 0x0ddcbe76,
+            Self::Female => 0x3b1f8b15,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum HairPartType {
+    Right = 0x8eb27afa,
+    Both = 0xa9021713,
+    Left = 0x63a5d310,
+    Center = 0x6e9ad537,
+
+    MiddleLeft = 0x1e4ce47d,
+    MiddleRight = 0x2be4a44d,
+    MiddleBoth = 0x444fff10,
+    MiddleCenter = 0xa5c801e3,
+
+    LowerBoth = 0xb3ed42ab,
+    LowerLeft = 0x3e2e5102,
+    LowerRight = 0x549acbdc,
+    LowerCenter = 0x0d91960a,
+
+    UpperBoth = 0x8f1f2325,
+    UpperCenter = 0x9315920f,
+    UpperLeft = 0x5eb80c96,
+    UpperRight = 0x708fa072,
+}
+
+#[derive(Debug, Clone, ToByml)]
+pub struct Vector2f {
+    #[byml(default = 0.0)]
+    pub x: f32,
+
+    #[byml(default = 0.0)]
+    pub y: f32,
+}
+
+#[derive(Debug, Clone, ToByml, PartialEq, Eq)]
+pub struct PartsModelUnitParam {
+    #[byml(skip_none)]
+    pub fmdb: Option<String>,
+
+    #[byml(key = "PhivePhcl", skip_none)]
+    pub phcl: Option<String>,
+}
+
+#[derive(Debug, Clone, ToByml, PartialEq, Eq)]
+pub struct HairPartsAttachInfo {
+    pub editor_upper_icon_name: String,
+    pub hair_parts_name: String,
+    pub is_attachable_upper: bool,
 }
 
 impl PartsEntry {
+    pub fn new(
+        index: u32,
+        category_name: String,
+        file_name: String,
+        row_id: String,
+        parts_type_hash: u32,
+        editor_icon_name: Option<String>,
+        model_fmdb: Option<String>,
+    ) -> Self {
+        Self {
+            row_id,
+            category: category_name,
+            file_name,
+            parts_index: index as i32,
+            parts_type: parts_type_hash,
+            is_visible_in_editor: true,
+            is_selectable_color: true,
+            is_selectable_sub_color: false,
+            editor_icon_name,
+            editor_mask_icon_name: None,
+            hair_gender: HairGender::Both,
+            baby_hair_name_father_male: None,
+            baby_hair_name_father_female: None,
+            baby_hair_name_mother_male: None,
+            baby_hair_name_mother_female: None,
+            is_use_hair_parts_model: false,
+            texture_name: None,
+            no_lip_texture_name: None,
+            use_texture_color: false,
+            is_flippable: false,
+            is_attachable_hair_front: false,
+            is_attachable_hair_parts_upper: false,
+            is_attachable_hair_parts_middle: false,
+            is_attachable_hair_parts_lower: false,
+            is_mouth_open: false,
+            is_enable_mouth_lip_default: false,
+            rotate_axis: Vector2f { x: 0.0, y: 0.0 },
+            offset_rotate: 0,
+            max_trans_x: 18,
+            min_trans_y: 0,
+            max_trans_y: 31,
+            default_scale: 0,
+            default_aspect: 3,
+            default_trans_x: 0,
+            default_trans_y: 0,
+            axis_for_expression: Vector2f { x: 0.0, y: 0.0 },
+            size_for_expression: 1.0,
+            components: BTreeMap::new(),
+            components_hash: BTreeMap::new(),
+            model_unit: PartsModelUnitParam {
+                fmdb: model_fmdb,
+                phcl: None,
+            },
+            model_unit_for_hat: None,
+            flipped_model_unit: None,
+            flipped_model_unit_for_hat: None,
+            hair_parts_model_unit: BTreeMap::new(),
+            hair_parts_model_unit_for_hat: BTreeMap::new(),
+            hair_parts_attach_info: Vec::new(),
+        }
+    }
+
     pub fn remap_to(
         &mut self,
         new_index: i32,
@@ -40,20 +279,7 @@ impl PartsEntry {
         self.file_name = new_file_name;
         self.row_id = new_row_id;
 
-        if !old_model_token.is_empty() {
-            for p in &mut self.model_paths {
-                *p = p.replace(old_model_token, new_model_token);
-            }
-        }
-
         self.editor_icon_name = Some(cat.editor_icon_name(new_index as u32));
-
-        if let Some(Value::String(icon)) = self.rstbl_raw.get_mut("EditorIconName") {
-            *icon = cat.editor_icon_name(new_index as u32);
-        }
-        if let Some(Value::String(icon)) = self.pack_raw.get_mut("EditorIconName") {
-            *icon = cat.editor_icon_name(new_index as u32);
-        }
 
         self.flush_to_raw(old_model_token, new_model_token, cat);
     }
@@ -67,49 +293,52 @@ impl PartsEntry {
         &mut self,
         old_model_token: &str,
         new_model_token: &str,
-        cat: &dyn CategoryDef,
+        _cat: &dyn CategoryDef,
     ) {
-        let extra = cat.extra_index_fields(self.parts_index as u32);
+        let index = self.parts_index;
 
-        for map in [&mut self.rstbl_raw, &mut self.pack_raw] {
-            if map.is_empty() {
-                continue;
-            }
-
-            map.insert("FileName".into(), Value::String(self.file_name.clone()));
-            map.insert("PartsIndex".into(), Value::I32(self.parts_index));
-
-            if let Some(ref icon) = self.editor_icon_name {
-                map.insert("EditorIconName".into(), Value::String(icon.clone()));
-            }
-
-            for (key, value) in &extra {
-                if map.contains_key(*key) {
-                    map.insert(key.to_string(), Value::String(value.clone()));
-                }
-            }
-        }
-
-        if !self.rstbl_raw.is_empty() {
-            self.rstbl_raw
-                .insert("__RowId".into(), Value::String(self.row_id.clone()));
-        }
-
-        let extra_keys = cat.extra_remappable_string_keys();
-        for map in [&mut self.rstbl_raw, &mut self.pack_raw] {
-            if map.is_empty() {
-                continue;
-            }
-            for (key, sub_val) in map.iter_mut() {
-                let is_extra_key = extra_keys.contains(&key.as_str());
+        let mutate_path = |opt_path: &mut Option<String>| {
+            if let Some(path) = opt_path {
+                let mut temp_val = Value::String(path.clone());
                 Self::smart_path_replace(
-                    sub_val,
+                    &mut temp_val,
                     old_model_token,
                     new_model_token,
-                    self.parts_index,
-                    is_extra_key,
+                    index,
+                    false,
                 );
+                if let Value::String(updated) = temp_val {
+                    *path = updated;
+                }
             }
+        };
+
+        mutate_path(&mut self.model_unit.fmdb);
+        mutate_path(&mut self.model_unit.phcl);
+
+        if let Some(ref mut unit) = self.model_unit_for_hat {
+            mutate_path(&mut unit.fmdb);
+            mutate_path(&mut unit.phcl);
+        }
+
+        if let Some(ref mut unit) = self.flipped_model_unit {
+            mutate_path(&mut unit.fmdb);
+            mutate_path(&mut unit.phcl);
+        }
+
+        if let Some(ref mut unit) = self.flipped_model_unit_for_hat {
+            mutate_path(&mut unit.fmdb);
+            mutate_path(&mut unit.phcl);
+        }
+
+        for unit in self.hair_parts_model_unit.values_mut() {
+            mutate_path(&mut unit.fmdb);
+            mutate_path(&mut unit.phcl);
+        }
+
+        for unit in self.hair_parts_model_unit_for_hat.values_mut() {
+            mutate_path(&mut unit.fmdb);
+            mutate_path(&mut unit.phcl);
         }
     }
 
@@ -182,11 +411,11 @@ impl PartsEntry {
     }
 
     pub fn build_rstbl_value(&self) -> Value {
-        Value::Dict(self.rstbl_raw.clone())
+        self.to_byml()
     }
 
     pub fn build_pack_value(&self) -> Value {
-        Value::Dict(self.pack_raw.clone())
+        self.to_byml()
     }
 }
 
@@ -199,6 +428,9 @@ pub struct CompiledAsset {
 
 pub trait CategoryDef: Send + Sync {
     fn category_name(&self) -> &str;
+    fn internal_category_name(&self) -> &str {
+        self.category_name()
+    }
     fn parts_type_hash(&self) -> u32;
     fn vanilla_max_parts_index(&self) -> i32;
     fn part_name(&self, index: u32) -> String;
@@ -236,12 +468,12 @@ pub trait CategoryDef: Send + Sync {
 
     /// Build the rstbl Value for `entry`.
     fn build_rstbl_value(&self, entry: &PartsEntry) -> Value {
-        build_from_raw(&entry.rstbl_raw, entry)
+        entry.build_rstbl_value()
     }
 
     /// Build the pack bgyml Value for `entry`.
     fn build_pack_value(&self, entry: &PartsEntry) -> Value {
-        build_from_raw(&entry.pack_raw, entry)
+        entry.build_pack_value()
     }
 
     /// Parse category-specific asset parameters from the manifest JSON blob.
@@ -265,76 +497,32 @@ pub trait CategoryDef: Send + Sync {
         index: u32,
         editor_icon_name: Option<String>,
         params: &dyn AssetParams,
-        rstbl_template: &BTreeMap<String, Value>,
+        _rstbl_template: &BTreeMap<String, Value>,
     ) -> Result<PartsEntry> {
         let model_fmdb = params.primary_source().to_string();
+        let fmdb_opt = if model_fmdb.is_empty() {
+            None
+        } else {
+            Some(model_fmdb)
+        };
 
-        let file_name = self.part_name(index);
-        let row_id = self.row_id(index);
-        let icon = editor_icon_name
-            .clone()
-            .unwrap_or_else(|| self.vanilla_icon_fallback().to_string());
-
-        let mut rstbl_raw = rstbl_template.clone();
-        rstbl_raw.insert(
-            "Category".into(),
-            Value::String(self.category_name().into()),
-        );
-        rstbl_raw.insert("FileName".into(), Value::String(file_name.clone()));
-        rstbl_raw.insert("PartsIndex".into(), Value::I32(index as i32));
-        rstbl_raw.insert("__RowId".into(), Value::String(row_id.clone()));
-        rstbl_raw.insert("EditorIconName".into(), Value::String(icon.clone()));
-
-        for (key, value) in self.extra_index_fields(index) {
-            if rstbl_raw.contains_key(key) {
-                rstbl_raw.insert(key.to_string(), Value::String(value));
-            }
-        }
-
-        if !model_fmdb.is_empty() {
-            if let Some(Value::Dict(mu)) = rstbl_raw.get_mut("ModelUnit") {
-                mu.insert("Fmdb".into(), Value::String(model_fmdb.clone()));
-            }
-        }
-
-        let mut pack_raw = BTreeMap::new();
-        pack_raw.insert(
-            "Category".into(),
-            Value::String(self.category_name().into()),
-        );
-
-        pack_raw.insert("EditorIconName".into(), Value::String(icon));
-        pack_raw.insert("FileName".into(), Value::String(file_name.clone()));
-        pack_raw.insert("IsVisibleInEditor".into(), Value::Bool(true));
-        pack_raw.insert("PartsIndex".into(), Value::I32(index as i32));
-
-        if !model_fmdb.is_empty() {
-            let mut mu = BTreeMap::new();
-            mu.insert("Fmdb".into(), Value::String(model_fmdb.clone()));
-            pack_raw.insert("ModelUnit".into(), Value::Dict(mu));
-        }
-
-        Ok(PartsEntry {
-            parts_index: index as i32,
-            file_name,
-            row_id,
+        let entry = PartsEntry::new(
+            index,
+            self.category_name().to_string(),
+            self.part_name(index),
+            self.row_id(index),
+            self.parts_type_hash(),
             editor_icon_name,
-            model_paths: if model_fmdb.is_empty() {
-                vec![]
-            } else {
-                vec![model_fmdb]
-            },
-            rstbl_raw,
-            pack_raw,
-        })
+            fmdb_opt,
+        );
+
+        Ok(entry)
     }
 
     fn json_schema(&self) -> Schema;
 }
 
-pub fn extract_entry_fields(
-    map: &BTreeMap<String, Value>,
-) -> (String, String, Option<String>, Vec<String>) {
+pub fn extract_entry_fields(map: &BTreeMap<String, Value>) -> (String, String, Option<String>) {
     let file_name = str_field(map, "FileName");
     let row_id = str_field(map, "__RowId");
 
@@ -343,119 +531,7 @@ pub fn extract_entry_fields(
         _ => None,
     };
 
-    let mut model_paths = Vec::new();
-    collect_model_paths_recursive(Value::Dict(map.clone()), &mut model_paths);
-
-    (file_name, row_id, editor_icon_name, model_paths)
-}
-
-fn collect_model_paths_recursive(val: Value, paths: &mut Vec<String>) {
-    match val {
-        Value::Dict(map) => {
-            for (key, sub_val) in map {
-                if key == "Fmdb" || key == "PhivePhcl" {
-                    if let Value::String(s) = sub_val {
-                        if !s.is_empty() {
-                            paths.push(s);
-                        }
-                    }
-                } else {
-                    collect_model_paths_recursive(sub_val, paths);
-                }
-            }
-        }
-        Value::Array(arr) => {
-            for sub_val in arr {
-                collect_model_paths_recursive(sub_val, paths);
-            }
-        }
-        _ => {}
-    }
-}
-
-pub fn parse_rstbl_entry_common(
-    val: &Value,
-    category: &str,
-    vanilla_max: i32,
-) -> Result<Option<PartsEntry>> {
-    let Value::Dict(map) = val else {
-        return Ok(None);
-    };
-
-    if map.get("Category").and_then(|v| match v {
-        Value::String(s) => Some(s.as_str()),
-        _ => None,
-    }) != Some(category)
-    {
-        return Ok(None);
-    }
-
-    let parts_index = match i32_field(map, "PartsIndex") {
-        Some(n) => n,
-        None => return Ok(None),
-    };
-
-    if parts_index <= vanilla_max {
-        return Ok(None);
-    }
-
-    let (file_name, row_id, editor_icon_name, model_paths) = extract_entry_fields(map);
-
-    if file_name.is_empty() {
-        return Ok(None);
-    }
-
-    Ok(Some(PartsEntry {
-        parts_index,
-        file_name,
-        row_id,
-        editor_icon_name,
-        model_paths,
-        rstbl_raw: map.clone(),
-        pack_raw: BTreeMap::new(),
-    }))
-}
-
-pub fn parse_pack_entry_common(
-    map: &BTreeMap<String, Value>,
-    vanilla_max: i32,
-) -> Result<Option<PartsEntry>> {
-    let parts_index = match i32_field(map, "PartsIndex") {
-        Some(n) => n,
-        None => return Ok(None),
-    };
-
-    if parts_index <= vanilla_max {
-        return Ok(None);
-    }
-
-    let (file_name, _row_id, editor_icon_name, model_paths) = extract_entry_fields(map);
-
-    Ok(Some(PartsEntry {
-        parts_index,
-        file_name,
-        row_id: String::new(),
-        editor_icon_name,
-        model_paths,
-        rstbl_raw: BTreeMap::new(),
-        pack_raw: map.clone(),
-    }))
-}
-
-pub fn build_from_raw(raw: &BTreeMap<String, Value>, entry: &PartsEntry) -> Value {
-    let mut map = raw.clone();
-    map.insert("FileName".into(), Value::String(entry.file_name.clone()));
-    map.insert("PartsIndex".into(), Value::I32(entry.parts_index));
-
-    if let Some(ref icon) = entry.editor_icon_name {
-        map.insert("EditorIconName".into(), Value::String(icon.clone()));
-    }
-
-    if !entry.row_id.is_empty() {
-        map.insert("__RowId".into(), Value::String(entry.row_id.clone()));
-    }
-
-    Value::Dict(map)
+    (file_name, row_id, editor_icon_name)
 }
 
 pub fn str_field(map: &BTreeMap<String, Value>, key: &str) -> String {

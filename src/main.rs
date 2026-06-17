@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use std::io::Read;
 use std::path::PathBuf;
 
-use ltdmerge::categories::{EyeDef, FacelineDef, HairFrontDef};
+use ltdmerge::categories::{EarDef, EyeDef, FacelineDef, HairBackDef, HairFrontDef};
 use ltdmerge::manifest::AddManifest;
 use ltdmerge::registry::CategoryRegistry;
 
@@ -56,6 +56,8 @@ fn build_registry() -> CategoryRegistry {
     registry.register(FacelineDef);
     registry.register(HairFrontDef);
     registry.register(EyeDef);
+    registry.register(EarDef);
+    registry.register(HairBackDef);
     registry
 }
 

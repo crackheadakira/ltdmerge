@@ -69,11 +69,11 @@ pub fn mutate_asset_structures(
 
     let part_filename = cat.part_name(next_index);
     let target_internal_token = cat.internal_model_name(next_index);
-    println!("Assigning index {next_index} → '{part_filename}'");
+    println!("Assigning index {next_index} -> '{part_filename}'");
 
     let compiled = cat.compile_asset(next_index, &target_internal_token, params.as_mut())?;
 
-    let template = find_template_entry(state.rstbl_doc, cat.category_name())?;
+    let template = find_template_entry(state.rstbl_doc, cat.internal_category_name())?;
     let editor_icon_name = match &spec.icon {
         Some(_) => cat.editor_icon_name(next_index),
         None => cat.vanilla_icon_fallback().to_string(),
@@ -427,12 +427,12 @@ fn inject_bntx_icon(
         .with_context(|| {
             format!(
                 "MiiEditorIcon.bntx has no vanilla textures matching category '{}'",
-                cat.category_name()
+                cat.internal_category_name()
             )
         })?
         .clone();
 
-    println!("Layout template: '{}'", template.name);
+    println!("Layout icon template: '{}'", template.name);
 
     let swizzled_data = encode_mips_swizzled(&img, &template)?;
     bntx.textures.push(Texture {

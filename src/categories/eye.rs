@@ -181,7 +181,6 @@ impl CategoryDef for EyeDef {
             file_name,
             row_id,
             editor_icon_name: Some(icon),
-            model_paths: vec![],
             rstbl_raw,
             pack_raw,
         })

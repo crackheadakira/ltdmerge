@@ -11,11 +11,11 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use tomolib::formats::byml::Value;
 
-const VANILLA_MAX_PARTS: i32 = 21;
-const FALLBACK_ICON: &str = "MiiEditor_Face_Faceline15_Uit";
+const VANILLA_MAX_PARTS: i32 = 3;
+const FALLBACK_ICON: &str = "MiiEditor_Face_Ear00_Uit";
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct FacelineParams {
+pub struct EarParams {
     pub model: String,
 
     #[serde(skip)]
@@ -23,23 +23,23 @@ pub struct FacelineParams {
     pub(crate) model_name: String,
 }
 
-impl AssetParams for FacelineParams {
+impl AssetParams for EarParams {
     fn primary_source(&self) -> &str {
         &self.model
     }
 
-    impl_as_any!(FacelineParams);
+    impl_as_any!(EarParams);
 }
 
-pub struct FacelineDef;
+pub struct EarDef;
 
-impl CategoryDef for FacelineDef {
+impl CategoryDef for EarDef {
     fn category_name(&self) -> &str {
-        "Faceline"
+        "Ear"
     }
 
     fn parts_type_hash(&self) -> u32 {
-        0x2E822724
+        0xBC6D99A0
     }
 
     fn vanilla_max_parts_index(&self) -> i32 {
@@ -47,15 +47,15 @@ impl CategoryDef for FacelineDef {
     }
 
     fn part_name(&self, index: u32) -> String {
-        format!("Faceline{index}")
+        format!("Ear{index:02}")
     }
 
     fn row_id(&self, index: u32) -> String {
-        format!("Work/Mii/Parts/Faceline{index}.mii__Parts.gyml")
+        format!("Work/Mii/Parts/Ear{index:02}.mii__Parts.gyml")
     }
 
     fn internal_model_name(&self, index: u32) -> String {
-        format!("MiiHead{index:02}")
+        format!("Ear{index:02}")
     }
 
     fn pack_path(&self, file_name: &str) -> String {
@@ -67,11 +67,11 @@ impl CategoryDef for FacelineDef {
     }
 
     fn path_parts_order(&self) -> &str {
-        "Mii/PartsOrder/Faceline.mii__PartsOrder.bgyml"
+        "Mii/PartsOrder/Ear.mii__PartsOrder.bgyml"
     }
 
     fn matches_icon_name(&self, tex_name: &str) -> bool {
-        tex_name.contains("MiiEditor_Face_Faceline")
+        tex_name.contains("MiiEditor_Face_Ear")
     }
 
     fn editor_icon_name(&self, index: u32) -> String {
@@ -79,17 +79,17 @@ impl CategoryDef for FacelineDef {
     }
 
     fn json_schema(&self) -> Schema {
-        schema_for!(FacelineParams)
+        schema_for!(EarParams)
     }
 
     fn parse_asset_params(&self, params: &serde_json::Value) -> Result<Box<dyn AssetParams>> {
-        let p: FacelineParams = serde_json::from_value(params.clone())
-            .map_err(|e| anyhow::anyhow!("Faceline params: {e}"))?;
+        let p: EarParams = serde_json::from_value(params.clone())
+            .map_err(|e| anyhow::anyhow!("Ear params: {e}"))?;
         Ok(Box::new(p))
     }
 
     fn parse_rstbl_entry(&self, val: &Value) -> Result<Option<PartsEntry>> {
-        parse_rstbl_entry_common(val, "Faceline", VANILLA_MAX_PARTS)
+        parse_rstbl_entry_common(val, "Ear", VANILLA_MAX_PARTS)
     }
 
     fn parse_pack_entry(&self, map: &BTreeMap<String, Value>) -> Result<Option<PartsEntry>> {
@@ -103,7 +103,7 @@ impl CategoryDef for FacelineDef {
         params: &dyn AssetParams,
         rstbl_template: &BTreeMap<String, Value>,
     ) -> Result<PartsEntry> {
-        let p = downcast_params::<FacelineParams>(params, self.category_name())?;
+        let p = downcast_params::<EarParams>(params, self.category_name())?;
 
         let file_name = self.part_name(index);
         let row_id = self.row_id(index);
@@ -111,7 +111,7 @@ impl CategoryDef for FacelineDef {
 
         let folder = self.internal_model_name(index);
         let fmdb = format!(
-            "Work/Model/Mii/MiiHead/{folder}/output/{}.fmdb",
+            "Work/Model/Mii/MiiEar/{folder}/output/{}.fmdb",
             p.model_name
         );
 
@@ -160,7 +160,7 @@ impl CategoryDef for FacelineDef {
         target_token: &str,
         params: &mut dyn AssetParams,
     ) -> Result<CompiledAsset> {
-        let p = crate::params::downcast_params_mut::<FacelineParams>(params, self.category_name())?;
+        let p = crate::params::downcast_params_mut::<EarParams>(params, self.category_name())?;
 
         let model_bytes = crate::util::read_and_decompress(Path::new(""), &p.model)?;
         let mut model_bfres = bfres_parse(&model_bytes)?;

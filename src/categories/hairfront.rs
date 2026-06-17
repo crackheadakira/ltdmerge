@@ -194,26 +194,11 @@ impl CategoryDef for HairFrontDef {
         insert_model_unit(&mut pack_raw, &main_fmdb, p.phcl_resolved());
         insert_model_unit_for_hat(&mut pack_raw, &hat_fmdb, p.hat_phcl_resolved());
 
-        let model_paths = {
-            let mut v = vec![main_fmdb.clone()];
-            if hat_fmdb != main_fmdb {
-                v.push(hat_fmdb);
-            }
-            if !p.phcl_resolved().is_empty() {
-                v.push(p.phcl_resolved().to_string());
-            }
-            if !p.hat_phcl_resolved().is_empty() {
-                v.push(p.hat_phcl_resolved().to_string());
-            }
-            v
-        };
-
         Ok(PartsEntry {
             parts_index: index as i32,
             file_name,
             row_id,
             editor_icon_name: Some(icon),
-            model_paths,
             rstbl_raw,
             pack_raw,
         })

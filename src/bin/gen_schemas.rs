@@ -1,4 +1,4 @@
-use ltdmerge::categories::{EyeDef, FacelineDef, HairFrontDef};
+use ltdmerge::categories::{EarDef, EyeDef, FacelineDef, HairFrontDef};
 use ltdmerge::registry::CategoryRegistry;
 use std::fs;
 use std::path::Path;
@@ -8,6 +8,7 @@ fn main() -> anyhow::Result<()> {
     registry.register(FacelineDef);
     registry.register(HairFrontDef);
     registry.register(EyeDef);
+    registry.register(EarDef);
 
     let schema_dir = Path::new("schema");
     fs::create_dir_all(schema_dir)?;
