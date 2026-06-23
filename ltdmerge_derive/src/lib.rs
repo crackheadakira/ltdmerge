@@ -140,7 +140,9 @@ fn type_to_value_expr(ty: &Type, value_expr: &TokenStream2) -> syn::Result<Token
     if type_str.starts_with("BTreeMap<") || type_str.starts_with("std::collections::BTreeMap<") {
         if type_str.contains("String,") {
             return Ok(quote! {
-                ::tomolib::formats::byml::Value::Dict(#value_expr.clone())
+                ::tomolib::formats::byml::Value::Dict(
+                    #value_expr.iter().map(|(k, v)| (k.clone(), v.to_byml())).collect()
+                )
             });
         } else {
             return Ok(quote! {

@@ -1,6 +1,4 @@
-use crate::category::{
-    CategoryDef, CompiledAsset, PartsEntry, parse_pack_entry_common, parse_rstbl_entry_common,
-};
+use crate::category::{CategoryDef, CompiledAsset, PartsEntry};
 use crate::impl_as_any;
 use crate::params::{AssetParams, downcast_params};
 use crate::util::bfres_parse;
@@ -78,6 +76,10 @@ impl CategoryDef for FacelineDef {
         format!("MiiEditor_Face_{}_Uit", self.part_name(index))
     }
 
+    fn editor_mask_icon_name(&self, index: u32) -> String {
+        format!("MiiEditor_Face_{}color_Uit", self.part_name(index))
+    }
+
     fn json_schema(&self) -> Schema {
         schema_for!(FacelineParams)
     }
@@ -88,70 +90,28 @@ impl CategoryDef for FacelineDef {
         Ok(Box::new(p))
     }
 
-    fn parse_rstbl_entry(&self, val: &Value) -> Result<Option<PartsEntry>> {
-        parse_rstbl_entry_common(val, "Faceline", VANILLA_MAX_PARTS)
-    }
+    fn apply_category_defaults(&self, index: u32, mut entry: PartsEntry) -> PartsEntry {
+        entry.parts_index = index as i32;
+        entry.parts_type = self.parts_type_hash();
+        entry.category = self.category_name().to_string();
+        entry.file_name = self.part_name(index);
+        entry.row_id = self.row_id(index);
 
-    fn parse_pack_entry(&self, map: &BTreeMap<String, Value>) -> Result<Option<PartsEntry>> {
-        parse_pack_entry_common(map, VANILLA_MAX_PARTS)
-    }
-
-    fn new_entry(
-        &self,
-        index: u32,
-        editor_icon_name: Option<String>,
-        params: &dyn AssetParams,
-        rstbl_template: &BTreeMap<String, Value>,
-    ) -> Result<PartsEntry> {
-        let p = downcast_params::<FacelineParams>(params, self.category_name())?;
-
-        let file_name = self.part_name(index);
-        let row_id = self.row_id(index);
-        let icon = editor_icon_name.unwrap_or_else(|| self.vanilla_icon_fallback().to_string());
-
-        let folder = self.internal_model_name(index);
-        let fmdb = format!(
-            "Work/Model/Mii/MiiHead/{folder}/output/{}.fmdb",
-            p.model_name
-        );
-
-        let mut rstbl_raw = rstbl_template.clone();
-        rstbl_raw.insert(
-            "Category".into(),
-            Value::String(self.category_name().into()),
-        );
-        rstbl_raw.insert("FileName".into(), Value::String(file_name.clone()));
-        rstbl_raw.insert("PartsIndex".into(), Value::I32(index as i32));
-        rstbl_raw.insert("__RowId".into(), Value::String(row_id.clone()));
-        rstbl_raw.insert("EditorIconName".into(), Value::String(icon.clone()));
-
-        if let Some(Value::Dict(mu)) = rstbl_raw.get_mut("ModelUnit") {
-            mu.insert("Fmdb".into(), Value::String(fmdb.clone()));
+        if entry.editor_icon_name.is_none() {
+            entry.editor_icon_name = Some(self.editor_icon_name(index));
         }
 
-        let mut pack_raw = BTreeMap::new();
-        pack_raw.insert(
-            "Category".into(),
-            Value::String(self.category_name().into()),
-        );
-        pack_raw.insert("EditorIconName".into(), Value::String(icon.clone()));
-        pack_raw.insert("FileName".into(), Value::String(file_name.clone()));
-        pack_raw.insert("IsVisibleInEditor".into(), Value::Bool(true));
-        pack_raw.insert("PartsIndex".into(), Value::I32(index as i32));
-        pack_raw.insert("ModelUnit".into(), {
-            let mut mu = BTreeMap::new();
-            mu.insert("Fmdb".into(), Value::String(fmdb.clone()));
-            Value::Dict(mu)
-        });
+        entry.max_trans_x = 18;
+        entry.min_trans_y = 0;
+        entry.max_trans_y = 31;
+        entry.is_flippable = false;
+        entry.is_use_hair_parts_model = false;
 
-        Ok(PartsEntry {
-            parts_index: index as i32,
-            file_name,
-            row_id,
-            editor_icon_name: Some(icon),
-            rstbl_raw,
-            pack_raw,
-        })
+        if entry.default_scale == 0 {
+            entry.default_scale = 2;
+        }
+
+        entry
     }
 
     fn compile_asset(

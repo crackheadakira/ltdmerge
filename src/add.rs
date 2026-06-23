@@ -1,5 +1,5 @@
-use crate::category::CategoryDef;
-use crate::manifest::{AddManifest, AssetSpec};
+use crate::category::{CategoryDef, PartsEntry};
+use crate::manifest::AddManifest;
 use crate::registry::CategoryRegistry;
 use crate::rstbl::alloc_size;
 use crate::util::*;
@@ -36,32 +36,26 @@ pub fn run(
     if manifest.assets.len() > 1 {
         add_multi(base, &out, &manifest.assets, registry)?;
     } else {
-        let spec = &manifest.assets[0];
+        let entry = &manifest.assets[0];
         let cat = registry
-            .get(&spec.category)
+            .get(&entry.category)
             .expect("category name was pre-validated in main");
 
-        println!("[1/1] Adding '{}' asset", spec.category);
-        add_single(base, &out, spec, cat)
-            .with_context(|| format!("category '{}'", spec.category))?;
+        println!("[1/1] Adding '{}' asset", entry.category);
+        add_single(base, &out, entry, cat)
+            .with_context(|| format!("category '{}'", entry.category))?;
     }
 
     Ok(())
 }
 
 pub fn mutate_asset_structures(
-    spec: &AssetSpec,
+    mut entry: PartsEntry,
     out: &Path,
     cat: &dyn CategoryDef,
     state: &mut MutableState,
 ) -> Result<BTreeMap<String, usize>> {
-    let written_sizes = BTreeMap::new();
-
-    let mut params = cat
-        .parse_asset_params(&spec.params)
-        .with_context(|| format!("parsing params for category '{}'", spec.category))?;
-
-    let primary = params.primary_source().to_string();
+    let mut written_sizes = BTreeMap::new();
 
     let existing_indices = collect_category_indices(state.rstbl_doc, cat.parts_type_hash())?;
     let next_index = existing_indices.iter().copied().max().unwrap_or(0);
@@ -71,45 +65,57 @@ pub fn mutate_asset_structures(
     let target_internal_token = cat.internal_model_name(next_index);
     println!("Assigning index {next_index} -> '{part_filename}'");
 
-    let compiled = cat.compile_asset(next_index, &target_internal_token, params.as_mut())?;
+    let primary = entry
+        .model_unit
+        .fmdb
+        .clone()
+        .or_else(|| entry.texture_name.clone())
+        .context(
+            "Manifest entry is missing both a model_unit.fmdb and a texture_name source path",
+        )?;
 
-    let template = find_template_entry(state.rstbl_doc, cat.internal_category_name())?;
-    let editor_icon_name = match &spec.icon {
-        Some(_) => cat.editor_icon_name(next_index),
-        None => cat.vanilla_icon_fallback().to_string(),
-    };
+    if let Some(ref local_png_path) = entry.editor_icon_name {
+        let final_game_icon_token = cat.editor_icon_name(next_index);
+        inject_bntx_icon(
+            Path::new(local_png_path),
+            &final_game_icon_token,
+            cat,
+            state.editor_bntx,
+        )?;
 
-    let mut entry = cat.new_entry(
-        next_index,
-        Some(editor_icon_name.clone()),
-        params.as_ref(),
-        &template,
-    )?;
-
-    if compiled.romfs_files.is_empty() && compiled.pack_files.is_empty() {
-        if !is_bfres(&primary) {
-            if let Some(ref mut bntx_archive) = state.base_bntx {
-                let png_bytes = std::fs::read(&primary)?;
-                let img = image::png_to_rgba(&png_bytes)?;
-
-                let template_tex = bntx_archive
-                    .textures
-                    .iter()
-                    .find(|tex| cat.matches_texture_name(&tex.name))
-                    .context("MiiParts.bntx template match failed")?
-                    .clone();
-
-                bntx_archive.textures.push(Texture {
-                    name: target_internal_token.clone(),
-                    info: template_tex.info.clone(),
-                    mip_offsets: template_tex.mip_offsets.clone(),
-                    user_data: vec![],
-                    image_data: encode_mips_swizzled(&img, &template_tex)?,
-                });
-            }
-        }
+        entry.editor_icon_name = Some(final_game_icon_token);
     } else {
-        for (lookup_key, raw_bytes) in compiled.romfs_files {
+        entry.editor_icon_name = Some(cat.vanilla_icon_fallback().to_string());
+    }
+
+    if let Some(ref local_png_path) = entry.editor_mask_icon_name {
+        let final_game_icon_token = cat.editor_mask_icon_name(next_index);
+        inject_bntx_icon(
+            Path::new(local_png_path),
+            &final_game_icon_token,
+            cat,
+            state.editor_bntx,
+        )?;
+
+        entry.editor_mask_icon_name = Some(final_game_icon_token);
+    }
+
+    entry = cat.apply_category_defaults(next_index, entry);
+
+    let mut romfs_files = BTreeMap::new();
+    if is_bfres(&primary) {
+        entry.model_unit.compile_and_finalize(
+            &target_internal_token,
+            &target_internal_token,
+            &mut romfs_files,
+        )?;
+
+        if let Some(ref mut hat_unit) = entry.model_unit_for_hat {
+            let hat_token = format!("{}_Hat", target_internal_token);
+            hat_unit.compile_and_finalize(&hat_token, &target_internal_token, &mut romfs_files)?;
+        }
+
+        for (lookup_key, raw_bytes) in romfs_files {
             let rel_path = format!("{lookup_key}.zs");
             let size = compress_and_write(out, &rel_path, &raw_bytes)?;
 
@@ -120,28 +126,45 @@ pub fn mutate_asset_structures(
             });
             path_entries.sort_by_key(|f| f.name.clone());
             state.rsizetable.set_path_entries(path_entries);
-        }
 
-        for (archive_internal_path, raw_bytes) in compiled.pack_files {
-            state.pack_entries.insert(archive_internal_path, raw_bytes);
+            written_sizes.insert(format!("romfs/{rel_path}"), size);
+        }
+    } else {
+        if let Some(ref mut bntx_archive) = state.base_bntx {
+            println!("Injecting raw asset texture into MiiParts.bntx: '{target_internal_token}'");
+            let png_bytes = std::fs::read(&primary).with_context(|| {
+                format!("failed to read texture asset source file: {}", primary)
+            })?;
+            let img = image::png_to_rgba(&png_bytes)?;
+
+            let template_tex = bntx_archive
+                .textures
+                .iter()
+                .find(|tex| cat.matches_texture_name(&tex.name))
+                .with_context(|| {
+                    format!(
+                        "MiiParts.bntx template match failed for category '{}'",
+                        cat.category_name()
+                    )
+                })?
+                .clone();
+
+            bntx_archive.textures.push(Texture {
+                name: target_internal_token.clone(),
+                info: template_tex.info.clone(),
+                mip_offsets: template_tex.mip_offsets.clone(),
+                user_data: vec![],
+                image_data: encode_mips_swizzled(&img, &template_tex)?,
+            });
+
+            entry.texture_name = Some(target_internal_token.clone());
+        } else {
+            bail!(
+                "Category '{}' received a non-BFRES asset but does not support direct BNTX texture injection.",
+                cat.category_name()
+            );
         }
     }
-
-    let template_index = match template.get("PartsIndex") {
-        Some(Value::I32(n)) => *n as u32,
-        Some(Value::U32(n)) => *n,
-        _ => 15,
-    };
-    let old_token = cat.internal_model_name(template_index);
-
-    entry.remap_to(
-        next_index as i32,
-        part_filename.clone(),
-        cat.row_id(next_index),
-        &old_token,
-        &target_internal_token,
-        cat,
-    );
 
     let root_array = byml_root_array_mut(state.rstbl_doc)?;
     root_array.push(entry.build_rstbl_value());
@@ -162,12 +185,8 @@ pub fn mutate_asset_structures(
             Some(Value::Array(a)) => a,
             _ => bail!("PartsOrder missing 'Order' Array"),
         };
-        let insert_pos = spec.order_index.unwrap_or(order_arr.len());
-        order_arr.insert(insert_pos, Value::U32(next_index));
-    }
 
-    if let Some(ref icon_path) = spec.icon {
-        inject_bntx_icon(icon_path, &editor_icon_name, cat, state.editor_bntx)?;
+        order_arr.push(Value::U32(next_index));
     }
 
     Ok(written_sizes)

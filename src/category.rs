@@ -1,11 +1,12 @@
-use crate::params::AssetParams;
-use anyhow::Result;
+use crate::{params::AssetParams, util::bfres_parse};
+use anyhow::{Context, Result};
 use ltdmerge_derive::ToByml;
-use schemars::Schema;
-use std::collections::BTreeMap;
+use schemars::{JsonSchema, Schema};
+use serde::Deserialize;
+use std::{collections::BTreeMap, path::Path};
 use tomolib::formats::byml::Value;
 
-#[derive(Debug, Clone, ToByml)]
+#[derive(Debug, Clone, ToByml, Deserialize)]
 pub struct PartsEntry {
     #[byml(key = "__RowId")]
     pub row_id: String,
@@ -113,9 +114,9 @@ pub struct PartsEntry {
     pub size_for_expression: f32,
 
     #[byml(default = BTreeMap::new())]
-    pub components: BTreeMap<String, Value>,
+    pub components: BTreeMap<String, ComponentInfo>,
     #[byml(default = BTreeMap::new())]
-    pub components_hash: BTreeMap<String, Value>,
+    pub components_hash: BTreeMap<String, ComponentInfo>,
     pub model_unit: PartsModelUnitParam,
 
     #[byml(skip_none)]
@@ -137,7 +138,9 @@ pub struct PartsEntry {
     pub hair_parts_attach_info: Vec<HairPartsAttachInfo>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[repr(u32)]
 pub enum HairGender {
     Both,
     Male,
@@ -154,7 +157,8 @@ impl HairGender {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
+#[serde(rename_all = "camelCase")]
 #[repr(u32)]
 pub enum HairPartType {
     Right = 0x8eb27afa,
@@ -178,7 +182,8 @@ pub enum HairPartType {
     UpperRight = 0x708fa072,
 }
 
-#[derive(Debug, Clone, ToByml)]
+#[derive(Debug, Clone, ToByml, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct Vector2f {
     #[byml(default = 0.0)]
     pub x: f32,
@@ -187,7 +192,8 @@ pub struct Vector2f {
     pub y: f32,
 }
 
-#[derive(Debug, Clone, ToByml, PartialEq, Eq)]
+#[derive(Debug, Clone, ToByml, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct PartsModelUnitParam {
     #[byml(skip_none)]
     pub fmdb: Option<String>,
@@ -196,11 +202,50 @@ pub struct PartsModelUnitParam {
     pub phcl: Option<String>,
 }
 
-#[derive(Debug, Clone, ToByml, PartialEq, Eq)]
+impl PartsModelUnitParam {
+    pub fn compile_and_finalize(
+        &mut self,
+        target_token: &str,
+        folder_name: &str,
+        romfs_files: &mut BTreeMap<String, Vec<u8>>,
+    ) -> Result<()> {
+        if let Some(ref raw_model_source) = self.fmdb {
+            let model_bytes = crate::util::read_and_decompress(Path::new(""), raw_model_source)?;
+            let mut model_bfres = bfres_parse(&model_bytes)?;
+
+            let internal_mesh_name = model_bfres
+                .models
+                .names
+                .get(0)
+                .context("The provided BFRES file contains no internal meshes.")?
+                .clone();
+
+            model_bfres.name = target_token.to_string();
+            let serialized = model_bfres.write().context("BFRES serialization failed")?;
+
+            romfs_files.insert(format!("Model/{target_token}.bfres"), serialized);
+
+            self.fmdb = Some(format!(
+                "Work/Model/Mii/MiiHead/{folder_name}/output/{internal_mesh_name}.fmdb"
+            ));
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, ToByml, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct HairPartsAttachInfo {
     pub editor_upper_icon_name: String,
     pub hair_parts_name: String,
     pub is_attachable_upper: bool,
+}
+
+#[derive(Debug, Clone, ToByml, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentInfo {
+    pub confluence_page_info: u32,
 }
 
 impl PartsEntry {
@@ -438,6 +483,7 @@ pub trait CategoryDef: Send + Sync {
     fn vanilla_icon_fallback(&self) -> &str;
     fn matches_icon_name(&self, tex_name: &str) -> bool;
     fn editor_icon_name(&self, index: u32) -> String;
+    fn editor_mask_icon_name(&self, index: u32) -> String;
     fn path_parts_order(&self) -> &str;
     fn pack_path(&self, file_name: &str) -> String;
     fn internal_model_name(&self, index: u32) -> String;
@@ -459,12 +505,6 @@ pub trait CategoryDef: Send + Sync {
     fn extra_remappable_string_keys(&self) -> &[&'static str] {
         &[]
     }
-
-    /// Parse one element of the flat rstbl.byml array.
-    fn parse_rstbl_entry(&self, val: &Value) -> Result<Option<PartsEntry>>;
-
-    /// Parse the root dict of an inner pack bgyml loaded from MiiParts.pack.
-    fn parse_pack_entry(&self, map: &BTreeMap<String, Value>) -> Result<Option<PartsEntry>>;
 
     /// Build the rstbl Value for `entry`.
     fn build_rstbl_value(&self, entry: &PartsEntry) -> Value {
@@ -491,33 +531,7 @@ pub trait CategoryDef: Send + Sync {
         })
     }
 
-    /// Build a brand-new PartsEntry for the `add` command.
-    fn new_entry(
-        &self,
-        index: u32,
-        editor_icon_name: Option<String>,
-        params: &dyn AssetParams,
-        _rstbl_template: &BTreeMap<String, Value>,
-    ) -> Result<PartsEntry> {
-        let model_fmdb = params.primary_source().to_string();
-        let fmdb_opt = if model_fmdb.is_empty() {
-            None
-        } else {
-            Some(model_fmdb)
-        };
-
-        let entry = PartsEntry::new(
-            index,
-            self.category_name().to_string(),
-            self.part_name(index),
-            self.row_id(index),
-            self.parts_type_hash(),
-            editor_icon_name,
-            fmdb_opt,
-        );
-
-        Ok(entry)
-    }
+    fn apply_category_defaults(&self, index: u32, entry: PartsEntry) -> PartsEntry;
 
     fn json_schema(&self) -> Schema;
 }

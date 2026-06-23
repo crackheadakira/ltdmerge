@@ -1,18 +1,11 @@
 use anyhow::Result;
 use serde::Deserialize;
-use std::path::PathBuf;
+
+use crate::category::PartsEntry;
 
 #[derive(Debug, Deserialize)]
 pub struct AddManifest {
-    pub assets: Vec<AssetSpec>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AssetSpec {
-    pub category: String,
-    pub icon: Option<PathBuf>,
-    pub order_index: Option<usize>,
-    pub params: serde_json::Value,
+    pub assets: Vec<PartsEntry>,
 }
 
 impl AddManifest {
