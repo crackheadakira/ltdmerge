@@ -1,27 +1,8 @@
-use crate::category::{CategoryDef, PartsEntry, parse_pack_entry_common, parse_rstbl_entry_common};
-use crate::impl_as_any;
-use crate::params::{AssetParams, downcast_params};
-use anyhow::Result;
-use schemars::{JsonSchema, Schema, schema_for};
-use serde::Deserialize;
-use std::collections::BTreeMap;
-use tomolib::formats::byml::Value;
+use crate::category::{CategoryDef, PartsEntry};
+use schemars::Schema;
 
 const VANILLA_MAX_PARTS: i32 = 62;
 const FALLBACK_ICON: &str = "MiiEditor_Face_Eye001_Uit";
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct EyeParams {
-    pub texture: String,
-}
-
-impl AssetParams for EyeParams {
-    fn primary_source(&self) -> &str {
-        &self.texture
-    }
-
-    impl_as_any!(EyeParams);
-}
 
 pub struct EyeDef;
 
@@ -46,8 +27,8 @@ impl CategoryDef for EyeDef {
         format!("Work/Mii/Parts/Eye{:03}.mii__Parts.gyml", index)
     }
 
-    fn internal_model_name(&self, _index: u32) -> String {
-        String::new()
+    fn internal_model_name(&self, index: u32) -> String {
+        format!("Eye{:03}", index)
     }
 
     fn pack_path(&self, file_name: &str) -> String {
@@ -74,6 +55,10 @@ impl CategoryDef for EyeDef {
         format!("MiiEditor_Face_{}_Uit", self.part_name(index))
     }
 
+    fn editor_mask_icon_name(&self, index: u32) -> Option<String> {
+        Some(format!("MiiEditor_Face_{}color_Uit", self.part_name(index)))
+    }
+
     fn extra_index_fields(&self, index: u32) -> Vec<(&'static str, String)> {
         vec![
             ("TextureName", self.part_name(index)),
@@ -88,105 +73,36 @@ impl CategoryDef for EyeDef {
         &["TextureName"]
     }
 
-    fn parse_asset_params(&self, params: &serde_json::Value) -> Result<Box<dyn AssetParams>> {
-        let p: EyeParams = serde_json::from_value(params.clone())
-            .map_err(|e| anyhow::anyhow!("Eye params: {e}"))?;
-        Ok(Box::new(p))
-    }
+    fn apply_category_defaults(&self, index: u32, mut entry: PartsEntry) -> PartsEntry {
+        entry.parts_index = index as i32;
+        entry.parts_type = self.parts_type_hash();
+        entry.category = self.category_name().to_string();
+        entry.file_name = self.part_name(index);
+        entry.row_id = self.row_id(index);
 
-    fn parse_rstbl_entry(&self, val: &Value) -> Result<Option<PartsEntry>> {
-        parse_rstbl_entry_common(val, "Eye", VANILLA_MAX_PARTS)
-    }
-
-    fn parse_pack_entry(&self, map: &BTreeMap<String, Value>) -> Result<Option<PartsEntry>> {
-        parse_pack_entry_common(map, VANILLA_MAX_PARTS)
-    }
-
-    fn new_entry(
-        &self,
-        index: u32,
-        editor_icon_name: Option<String>,
-        params: &dyn AssetParams,
-        rstbl_template: &BTreeMap<String, Value>,
-    ) -> Result<PartsEntry> {
-        let _ = downcast_params::<EyeParams>(params, self.category_name())?;
-
-        let file_name = self.part_name(index);
-        let row_id = self.row_id(index);
-        let icon = editor_icon_name.unwrap_or_else(|| self.vanilla_icon_fallback().to_string());
-        let texture_name = self.part_name(index);
-        let mask_icon = format!("MiiEditor_Face_{}color_Uit", file_name);
-
-        let mut rstbl_raw = rstbl_template.clone();
-        rstbl_raw.insert(
-            "Category".into(),
-            Value::String(self.category_name().into()),
-        );
-        rstbl_raw.insert("FileName".into(), Value::String(file_name.clone()));
-        rstbl_raw.insert("PartsIndex".into(), Value::I32(index as i32));
-        rstbl_raw.insert("__RowId".into(), Value::String(row_id.clone()));
-        rstbl_raw.insert("EditorIconName".into(), Value::String(icon.clone()));
-        rstbl_raw.insert("TextureName".into(), Value::String(texture_name.clone()));
-        rstbl_raw.insert(
-            "EditorMaskIconName".into(),
-            Value::String(mask_icon.clone()),
+        entry.components.insert(
+            "EyeAccessoryRef".to_string(),
+            "Work/Mii/EyeAccessoryParam/Eye000.mii__EyeAccessoryParam.gyml".to_string(),
         );
 
-        let mut pack_raw = BTreeMap::new();
-        pack_raw.insert("AxisForExpression".into(), {
-            rstbl_template
-                .get("AxisForExpression")
-                .cloned()
-                .unwrap_or_else(|| {
-                    let mut m = BTreeMap::new();
-                    m.insert("X".into(), Value::F32(0.0));
-                    m.insert("Y".into(), Value::F32(0.0));
-                    Value::Dict(m)
-                })
-        });
+        entry
+            .components_hash
+            .insert("EyeAccessoryRef".to_string(), 0x6207D9B3);
 
-        pack_raw.insert(
-            "Category".into(),
-            Value::String(self.category_name().into()),
-        );
+        entry.axis_for_expression.x = 0.38;
+        entry.axis_for_expression.y = 0.01;
 
-        let mut components = BTreeMap::new();
-        components.insert(
-            "EyeAccessoryRef".into(),
-            Value::String(format!(
-                "Work/Mii/EyeAccessoryParam/{}.mii__EyeAccessoryParam.gyml",
-                file_name
-            )),
-        );
-        pack_raw.insert("Components".into(), Value::Dict(components));
+        entry.is_visible_in_editor = true;
+        entry.is_selectable_color = true;
 
-        if let Some(ch) = rstbl_template.get("ComponentsHash") {
-            pack_raw.insert("ComponentsHash".into(), ch.clone());
+        if entry.texture_name.is_none() {
+            entry.texture_name = Some(self.part_name(index));
         }
 
-        pack_raw.insert("EditorIconName".into(), Value::String(icon.clone()));
-        pack_raw.insert("EditorMaskIconName".into(), Value::String(mask_icon));
-        pack_raw.insert("FileName".into(), Value::String(file_name.clone()));
-        pack_raw.insert("IsVisibleInEditor".into(), Value::Bool(true));
-        pack_raw.insert("PartsIndex".into(), Value::I32(index as i32));
-
-        if let Some(sz) = rstbl_template.get("SizeForExpression") {
-            pack_raw.insert("SizeForExpression".into(), sz.clone());
-        }
-
-        pack_raw.insert("TextureName".into(), Value::String(texture_name));
-
-        Ok(PartsEntry {
-            parts_index: index as i32,
-            file_name,
-            row_id,
-            editor_icon_name: Some(icon),
-            rstbl_raw,
-            pack_raw,
-        })
+        entry
     }
 
     fn json_schema(&self) -> Schema {
-        schema_for!(EyeParams)
+        schemars::schema_for!(PartsEntry)
     }
 }

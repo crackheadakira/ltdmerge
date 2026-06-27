@@ -51,16 +51,21 @@ impl CustomModNamespace {
             let arr = byml_root_array(&doc)?;
 
             for val in arr {
-                for cat in categories {
-                    if let Some(entry) = cat.parse_rstbl_entry(val)? {
-                        let name = cat.category_name();
-                        cat_data_map
-                            .get_mut(name)
-                            .unwrap()
-                            .rstbl_entries
-                            .push(entry);
-                        has_custom_content = true;
-                        break;
+                if let tomolib::formats::byml::Value::Dict(map) = val {
+                    for cat in categories {
+                        if let Some(entry) = crate::category::PartsEntry::from_byml_map(
+                            map,
+                            cat.internal_category_name(),
+                            cat.vanilla_max_parts_index(),
+                        )? {
+                            cat_data_map
+                                .get_mut(cat.category_name())
+                                .unwrap()
+                                .rstbl_entries
+                                .push(entry);
+                            has_custom_content = true;
+                            break;
+                        }
                     }
                 }
             }
@@ -76,7 +81,11 @@ impl CustomModNamespace {
                     let root_map = byml_root_dict(&doc)?;
 
                     for cat in categories {
-                        if let Some(entry) = cat.parse_pack_entry(root_map)? {
+                        if let Some(entry) = crate::category::PartsEntry::from_byml_map(
+                            root_map,
+                            cat.internal_category_name(),
+                            cat.vanilla_max_parts_index(),
+                        )? {
                             cat_data_map
                                 .get_mut(cat.category_name())
                                 .unwrap()

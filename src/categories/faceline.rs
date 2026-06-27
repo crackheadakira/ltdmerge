@@ -1,33 +1,8 @@
-use crate::category::{CategoryDef, CompiledAsset, PartsEntry};
-use crate::impl_as_any;
-use crate::params::{AssetParams, downcast_params};
-use crate::util::bfres_parse;
-use anyhow::{Context, Result};
-use schemars::{JsonSchema, Schema, schema_for};
-use serde::Deserialize;
-use std::collections::BTreeMap;
-use std::path::Path;
-use tomolib::formats::byml::Value;
+use crate::category::{CategoryDef, PartsEntry};
+use schemars::Schema;
 
 const VANILLA_MAX_PARTS: i32 = 21;
 const FALLBACK_ICON: &str = "MiiEditor_Face_Faceline15_Uit";
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct FacelineParams {
-    pub model: String,
-
-    #[serde(skip)]
-    #[schemars(skip)]
-    pub(crate) model_name: String,
-}
-
-impl AssetParams for FacelineParams {
-    fn primary_source(&self) -> &str {
-        &self.model
-    }
-
-    impl_as_any!(FacelineParams);
-}
 
 pub struct FacelineDef;
 
@@ -76,18 +51,8 @@ impl CategoryDef for FacelineDef {
         format!("MiiEditor_Face_{}_Uit", self.part_name(index))
     }
 
-    fn editor_mask_icon_name(&self, index: u32) -> String {
-        format!("MiiEditor_Face_{}color_Uit", self.part_name(index))
-    }
-
-    fn json_schema(&self) -> Schema {
-        schema_for!(FacelineParams)
-    }
-
-    fn parse_asset_params(&self, params: &serde_json::Value) -> Result<Box<dyn AssetParams>> {
-        let p: FacelineParams = serde_json::from_value(params.clone())
-            .map_err(|e| anyhow::anyhow!("Faceline params: {e}"))?;
-        Ok(Box::new(p))
+    fn editor_mask_icon_name(&self, index: u32) -> Option<String> {
+        Some(format!("MiiEditor_Face_{}color_Uit", self.part_name(index)))
     }
 
     fn apply_category_defaults(&self, index: u32, mut entry: PartsEntry) -> PartsEntry {
@@ -97,16 +62,13 @@ impl CategoryDef for FacelineDef {
         entry.file_name = self.part_name(index);
         entry.row_id = self.row_id(index);
 
-        if entry.editor_icon_name.is_none() {
-            entry.editor_icon_name = Some(self.editor_icon_name(index));
-        }
-
+        entry.is_visible_in_editor = true;
+        entry.is_selectable_color = true;
         entry.max_trans_x = 18;
         entry.min_trans_y = 0;
         entry.max_trans_y = 31;
         entry.is_flippable = false;
         entry.is_use_hair_parts_model = false;
-
         if entry.default_scale == 0 {
             entry.default_scale = 2;
         }
@@ -114,34 +76,7 @@ impl CategoryDef for FacelineDef {
         entry
     }
 
-    fn compile_asset(
-        &self,
-        _index: u32,
-        target_token: &str,
-        params: &mut dyn AssetParams,
-    ) -> Result<CompiledAsset> {
-        let p = crate::params::downcast_params_mut::<FacelineParams>(params, self.category_name())?;
-
-        let model_bytes = crate::util::read_and_decompress(Path::new(""), &p.model)?;
-        let mut model_bfres = bfres_parse(&model_bytes)?;
-
-        p.model_name = model_bfres
-            .models
-            .names
-            .get(0)
-            .context("The provided BFRES file contains no internal meshes.")?
-            .clone();
-
-        model_bfres.name = target_token.to_string();
-        let serialized = model_bfres.write().context("BFRES serialization failed")?;
-
-        let mut romfs_files = BTreeMap::new();
-        let target_bfres_filename = format!("{target_token}.bfres");
-        romfs_files.insert(format!("Model/{target_bfres_filename}"), serialized);
-
-        Ok(CompiledAsset {
-            pack_files: BTreeMap::new(),
-            romfs_files,
-        })
+    fn json_schema(&self) -> Schema {
+        schemars::schema_for!(PartsEntry)
     }
 }

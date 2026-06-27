@@ -14,7 +14,7 @@ impl CategoryRegistry {
 
     pub fn register(&mut self, cat: impl CategoryDef + 'static) {
         self.entries
-            .insert(cat.internal_category_name().to_string(), Box::new(cat));
+            .insert(cat.category_name().to_string(), Box::new(cat));
     }
 
     pub fn get(&self, name: &str) -> Option<&dyn CategoryDef> {

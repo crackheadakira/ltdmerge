@@ -88,8 +88,9 @@ pub fn mutate_asset_structures(
         entry.editor_icon_name = Some(cat.vanilla_icon_fallback().to_string());
     }
 
-    if let Some(ref local_png_path) = entry.editor_mask_icon_name {
-        let final_game_icon_token = cat.editor_mask_icon_name(next_index);
+    if let Some(ref local_png_path) = entry.editor_mask_icon_name
+        && let Some(final_game_icon_token) = cat.editor_mask_icon_name(next_index)
+    {
         inject_bntx_icon(
             Path::new(local_png_path),
             &final_game_icon_token,
@@ -130,11 +131,13 @@ pub fn mutate_asset_structures(
             written_sizes.insert(format!("romfs/{rel_path}"), size);
         }
     } else {
-        if let Some(ref mut bntx_archive) = state.base_bntx {
+        if let Some(bntx_archive) = &mut state.base_bntx {
             println!("Injecting raw asset texture into MiiParts.bntx: '{target_internal_token}'");
+
             let png_bytes = std::fs::read(&primary).with_context(|| {
                 format!("failed to read texture asset source file: {}", primary)
             })?;
+
             let img = image::png_to_rgba(&png_bytes)?;
 
             let template_tex = bntx_archive
@@ -192,7 +195,7 @@ pub fn mutate_asset_structures(
     Ok(written_sizes)
 }
 
-fn add_single(base: &Path, out: &Path, spec: &AssetSpec, cat: &dyn CategoryDef) -> Result<()> {
+fn add_single(base: &Path, out: &Path, spec: &PartsEntry, cat: &dyn CategoryDef) -> Result<()> {
     let rstbl_bytes = read_and_decompress(base, PATH_RSTBL_BYML)?;
     let mut rstbl_doc = byml_parse(&rstbl_bytes)?;
 
@@ -214,6 +217,7 @@ fn add_single(base: &Path, out: &Path, spec: &AssetSpec, cat: &dyn CategoryDef) 
 
     let mut base_bntx = if is_texture_asset {
         let raw_bntx_bytes = read_and_decompress(base, "Tex/Pack/MiiParts.bntx.zs")?;
+
         Some(Bntx::parse(&raw_bntx_bytes)?)
     } else {
         None
@@ -228,11 +232,13 @@ fn add_single(base: &Path, out: &Path, spec: &AssetSpec, cat: &dyn CategoryDef) 
             base_bntx: base_bntx.as_mut(),
             editor_bntx: &mut editor_bntx,
         };
-        mutate_asset_structures(spec, out, cat, &mut state)?
+
+        mutate_asset_structures(spec.clone(), out, cat, &mut state)?
     };
 
     if let Some(base_bntx) = base_bntx {
         let bntx_size = compress_and_write(out, "Tex/Pack/MiiParts.bntx.zs", &base_bntx.write()?)?;
+
         written_sizes.insert(
             clean_name("romfs/Tex/Pack/MiiParts.bntx").to_string(),
             bntx_size,
@@ -271,7 +277,7 @@ fn add_single(base: &Path, out: &Path, spec: &AssetSpec, cat: &dyn CategoryDef) 
 pub fn add_multi(
     base: &Path,
     out: &Path,
-    assets: &[AssetSpec],
+    assets: &[PartsEntry],
     registry: &CategoryRegistry,
 ) -> Result<()> {
     let rstbl_bytes = read_and_decompress(base, PATH_RSTBL_BYML)?;
@@ -327,7 +333,7 @@ pub fn add_multi(
             editor_bntx: &mut editor_bntx,
         };
 
-        let local_sizes = mutate_asset_structures(spec, out, cat, &mut state)?;
+        let local_sizes = mutate_asset_structures(spec.clone(), out, cat, &mut state)?;
         global_written_sizes.extend(local_sizes);
     }
 
@@ -400,30 +406,6 @@ fn collect_category_indices(doc: &Byml, target_hash: u32) -> Result<Vec<u32>> {
             None
         })
         .collect()
-}
-
-pub fn find_template_entry(doc: &Byml, target_category: &str) -> Result<BTreeMap<String, Value>> {
-    byml_root_array(doc)?
-        .iter()
-        .filter_map(|entry| {
-            if let Value::Dict(m) = entry {
-                if let Some(Value::String(cat)) = m.get("Category") {
-                    if cat == target_category {
-                        if let Some(Value::I32(idx)) = m.get("PartsIndex") {
-                            if *idx > 0 {
-                                return Some((*idx, m.clone()));
-                            }
-                        }
-                    }
-                }
-            }
-            None
-        })
-        .max_by_key(|(idx, _)| *idx)
-        .map(|(_, m)| m)
-        .context(format!(
-            "rstbl.byml has no existing '{target_category}' entries to template from",
-        ))
 }
 
 fn inject_bntx_icon(

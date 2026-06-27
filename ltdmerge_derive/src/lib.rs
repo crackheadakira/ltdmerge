@@ -139,9 +139,24 @@ fn type_to_value_expr(ty: &Type, value_expr: &TokenStream2) -> syn::Result<Token
 
     if type_str.starts_with("BTreeMap<") || type_str.starts_with("std::collections::BTreeMap<") {
         if type_str.contains("String,") {
+            let value_type_str = if type_str.starts_with("BTreeMap<") {
+                &type_str["BTreeMap<String,".len()..type_str.len() - 1]
+            } else {
+                &type_str["std::collections::BTreeMap<String,".len()..type_str.len() - 1]
+            };
+
+            let map_value = match value_type_str.trim() {
+                "bool" => quote! { ::tomolib::formats::byml::Value::Bool(*v) },
+                "i32" => quote! { ::tomolib::formats::byml::Value::I32(*v) },
+                "u32" => quote! { ::tomolib::formats::byml::Value::U32(*v) },
+                "f32" => quote! { ::tomolib::formats::byml::Value::F32(*v) },
+                "String" => quote! { ::tomolib::formats::byml::Value::String(v.clone()) },
+                _ => quote! { v.to_byml() },
+            };
+
             return Ok(quote! {
                 ::tomolib::formats::byml::Value::Dict(
-                    #value_expr.iter().map(|(k, v)| (k.clone(), v.to_byml())).collect()
+                    #value_expr.iter().map(|(k, v)| (k.clone(), #map_value)).collect()
                 )
             });
         } else {

@@ -1,7 +1,6 @@
 pub mod categories;
 pub mod category;
 pub mod manifest;
-pub mod params;
 pub mod registry;
 
 pub mod add;
