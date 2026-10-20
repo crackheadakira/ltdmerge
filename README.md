@@ -6,11 +6,18 @@ ltdmerge is a tool to streamline the process of creating new items in the Mii ed
 
 ## Creating a mod
 
-> [!NOTE]
-> Passing in `--icon` is optional, it will simply use an existing icon from the game instead when omitted.
-
 ```sh
-ltdmerge add --base /path/to/game/romfs --model /path/to/custom_model --icon /path/to/your_png --out /path/to/output_dir
+ltdmerge add --base /path/to/game/romfs --out /path/to/output_dir manifest.json
+```
+
+The manifest contains an `assets` array. Model categories use `model_unit.fmdb`
+as the local BFRES source; Eye uses `texture_name` as the local PNG source.
+An optional `editor_icon_name` supplies a PNG, otherwise a vanilla icon is reused.
+
+```json
+{
+    "assets": [{ "category": "Eye", "texture_name": "/path/to/eye.png" }]
+}
 ```
 
 ## Merging mods

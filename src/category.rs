@@ -1,13 +1,19 @@
+use crate::typed_param::{self, BymlDecode, BymlOrigin};
 use anyhow::{Context, Result};
-use ltdmerge_derive::ToByml;
+use ltdmerge_derive::{FromByml, ToByml};
 use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
 use std::{collections::BTreeMap, path::Path};
 use tomolib::formats::byml::Value;
 
-#[derive(Debug, Clone, ToByml, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, ToByml, FromByml, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct PartsEntry {
+    #[serde(skip)]
+    #[schemars(skip)]
+    #[byml(skip)]
+    pub(crate) origin: BymlOrigin,
+
     #[byml(key = "__RowId")]
     pub row_id: String,
 
@@ -140,11 +146,15 @@ pub struct PartsEntry {
 
     #[byml(default = Vec::new())]
     pub hair_parts_attach_info: Vec<HairPartsAttachInfo>,
+
+    #[byml(default = false)]
+    pub is_ltdmerge_gen: bool,
 }
 
 impl Default for PartsEntry {
     fn default() -> Self {
         Self {
+            origin: BymlOrigin::default(),
             row_id: String::new(),
             category: String::new(),
             file_name: String::new(),
@@ -194,106 +204,91 @@ impl Default for PartsEntry {
             hair_parts_model_unit: BTreeMap::new(),
             hair_parts_model_unit_for_hat: BTreeMap::new(),
             hair_parts_attach_info: Vec::new(),
+            is_ltdmerge_gen: false,
         }
     }
 }
 
 impl PartsEntry {
+    pub fn with_category_defaults(self, index: u32, cat: &dyn CategoryDef) -> Result<Self> {
+        let original = self.to_byml_full_map();
+        let origin = self.origin.clone();
+        let mut entry = cat.apply_category_defaults(index, self);
+        let mut values = entry.to_byml_full_map();
+
+        for key in &origin.manifest_fields {
+            if [
+                "PartsIndex",
+                "PartsType",
+                "Category",
+                "FileName",
+                "__RowId",
+                "IsLtdmergeGen",
+            ]
+            .contains(&key.as_str())
+            {
+                continue;
+            }
+
+            match original.get(key) {
+                Some(value) => {
+                    values.insert(key.clone(), value.clone());
+                }
+                None => {
+                    values.remove(key);
+                }
+            }
+        }
+
+        entry = Self::decode(&Value::Dict(values))?;
+        entry.origin = origin;
+        entry.sync_component_hashes();
+
+        Ok(entry)
+    }
+
+    pub fn sync_component_hashes(&mut self) {
+        for (name, path) in &self.components {
+            self.components_hash
+                .insert(name.clone(), typed_param::murmur32(path));
+        }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        typed_param::validate("mii__Parts", &self.to_byml_full_map())?;
+        anyhow::ensure!(self.parts_index >= 0, "negative PartsIndex");
+
+        for (name, path) in &self.components {
+            anyhow::ensure!(
+                self.components_hash.get(name) == Some(&typed_param::murmur32(path)),
+                "component reference/hash mismatch: {name}"
+            );
+        }
+
+        Ok(())
+    }
+
     pub fn from_byml_map(
         map: &BTreeMap<String, Value>,
         category_name: &str,
-        vanilla_max: i32,
+        _vanilla_max: i32,
     ) -> Result<Option<Self>> {
-        let cat = match map.get("Category") {
-            Some(Value::String(s)) => s.as_str(),
-            _ => return Ok(None),
-        };
-        if cat != category_name {
+        if !matches!(map.get("Category"), Some(Value::String(s)) if s == category_name) {
             return Ok(None);
         }
 
-        let index = match i32_field(map, "PartsIndex") {
-            Some(n) => n,
-            None => return Ok(None),
-        };
-        if index <= vanilla_max {
+        if !matches!(map.get("IsLtdmergeGen"), Some(Value::Bool(true))) {
             return Ok(None);
         }
 
-        let read_str = |key: &str| -> Option<String> {
-            match map.get(key) {
-                Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
-                _ => None,
-            }
-        };
-
-        let read_bool = |key: &str| -> bool { matches!(map.get(key), Some(Value::Bool(true))) };
-
-        let read_model_unit = |key: &str| -> Option<PartsModelUnitParam> {
-            if let Some(Value::Dict(m)) = map.get(key) {
-                let fmdb = match m.get("Fmdb") {
-                    Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
-                    _ => None,
-                };
-                let phcl = match m.get("PhivePhcl") {
-                    Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
-                    _ => None,
-                };
-                if fmdb.is_some() || phcl.is_some() {
-                    return Some(PartsModelUnitParam { fmdb, phcl });
-                }
-            }
-            None
-        };
-
-        let mut entry = Self::default();
-        entry.parts_index = index;
-        entry.category = cat.to_string();
-        entry.file_name = read_str("FileName").unwrap_or_default();
-        entry.row_id = read_str("__RowId").unwrap_or_default();
-        entry.parts_type = match map.get("PartsType") {
-            Some(Value::U32(n)) => *n,
-            _ => 0,
-        };
-        entry.is_visible_in_editor = read_bool("IsVisibleInEditor");
-        entry.is_selectable_color = read_bool("IsSelectableColor");
-        entry.is_selectable_sub_color = read_bool("IsSelectableSubColor");
-        entry.is_attachable_hair_front = read_bool("IsAttachableHairFront");
-        entry.is_attachable_hair_parts_upper = read_bool("IsAttachableHairPartsUpper");
-        entry.is_attachable_hair_parts_middle = read_bool("IsAttachableHairPartsMiddle");
-        entry.is_attachable_hair_parts_lower = read_bool("IsAttachableHairPartsLower");
-        entry.is_use_hair_parts_model = read_bool("IsUseHairPartsModel");
-        entry.is_flippable = read_bool("IsFlippable");
-        entry.is_mouth_open = read_bool("IsMouthOpen");
-        entry.is_enable_mouth_lip_default = read_bool("IsEnableMouthLipDefault");
-        entry.use_texture_color = read_bool("UseTextureColor");
-
-        entry.editor_icon_name = read_str("EditorIconName");
-        entry.editor_mask_icon_name = read_str("EditorMaskIconName");
-        entry.texture_name = read_str("TextureName");
-        entry.no_lip_texture_name = read_str("NoLipTextureName");
-
-        entry.baby_hair_name_father_male = read_str("BabyHairNameFatherMale");
-        entry.baby_hair_name_father_female = read_str("BabyHairNameFatherFemale");
-        entry.baby_hair_name_mother_male = read_str("BabyHairNameMotherMale");
-        entry.baby_hair_name_mother_female = read_str("BabyHairNameMotherFemale");
-
-        if let Some(Value::Dict(mu)) = map.get("ModelUnit") {
-            entry.model_unit = PartsModelUnitParam {
-                fmdb: match mu.get("Fmdb") {
-                    Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
-                    _ => None,
-                },
-                phcl: match mu.get("PhivePhcl") {
-                    Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
-                    _ => None,
-                },
-            };
-        }
-        entry.model_unit_for_hat = read_model_unit("ModelUnitForHat");
-        entry.flipped_model_unit = read_model_unit("FlippedModelUnit");
-        entry.flipped_model_unit_for_hat = read_model_unit("FlippedModelUnitForHat");
-
+        typed_param::validate("mii__Parts", map)?;
+        let expanded = typed_param::materialize("mii__Parts", map);
+        let mut entry = Self::decode(&Value::Dict(expanded))?;
+        anyhow::ensure!(
+            entry.parts_index >= 0,
+            "marked part has a negative PartsIndex"
+        );
+        entry.origin = BymlOrigin::loaded(map.clone(), entry.to_byml_full_map());
         Ok(Some(entry))
     }
 
@@ -306,11 +301,33 @@ impl PartsEntry {
         new_model_token: &str,
         cat: &dyn CategoryDef,
     ) {
+        let old_index = self.parts_index;
+        if new_index == old_index {
+            return;
+        }
+
+        let old_icon = cat.editor_icon_name(old_index as u32);
+        if self.editor_icon_name.as_deref() == Some(old_icon.as_str()) {
+            self.editor_icon_name = Some(cat.editor_icon_name(new_index as u32));
+        }
+
+        if let Some(old_mask) = cat.editor_mask_icon_name(old_index as u32)
+            && self.editor_mask_icon_name.as_deref() == Some(old_mask.as_str())
+        {
+            self.editor_mask_icon_name = cat.editor_mask_icon_name(new_index as u32);
+        }
+
+        if self.texture_name.as_deref() == Some(old_model_token) {
+            self.texture_name = Some(new_model_token.into());
+        }
+
+        if self.no_lip_texture_name.as_deref() == Some(old_model_token) {
+            self.no_lip_texture_name = Some(new_model_token.into());
+        }
+
         self.parts_index = new_index;
         self.file_name = new_file_name;
         self.row_id = new_row_id;
-
-        self.editor_icon_name = Some(cat.editor_icon_name(new_index as u32));
 
         self.flush_to_raw(old_model_token, new_model_token, cat);
     }
@@ -379,7 +396,13 @@ impl PartsEntry {
         match val {
             Value::String(s) => {
                 if !old.is_empty() && s.contains(old) {
-                    *s = s.replace(old, new);
+                    if s.ends_with(".fmdb")
+                        && let Some((directory, stem)) = s.rsplit_once('/')
+                    {
+                        *s = format!("{}/{}", directory.replace(old, new), stem);
+                    } else {
+                        *s = s.replace(old, new);
+                    }
                 } else if old.is_empty()
                     && (force_digit_rebuild
                         || s.contains("Work/Model/")
@@ -438,11 +461,23 @@ impl PartsEntry {
     }
 
     pub fn build_rstbl_value(&self) -> Value {
-        self.to_byml()
+        self.origin
+            .write(self.to_byml_full_map())
+            .unwrap_or_else(|| typed_param::row(self.to_byml_full_map()))
     }
 
     pub fn build_pack_value(&self) -> Value {
-        self.to_byml()
+        let current = self.to_byml_full_map();
+        if let Some(Value::Dict(mut map)) = self.origin.write(current.clone()) {
+            for field in ["__RowId", "PartsType"] {
+                if !self.origin.originally_contains(field) {
+                    map.remove(field);
+                }
+            }
+            Value::Dict(map)
+        } else {
+            typed_param::packed(current)
+        }
     }
 }
 
@@ -454,6 +489,7 @@ pub enum HairGender {
     Both,
     Male,
     Female,
+    Unknown(u32),
 }
 
 impl HairGender {
@@ -462,7 +498,19 @@ impl HairGender {
             Self::Both => 0xa9021713,
             Self::Male => 0x0ddcbe76,
             Self::Female => 0x3b1f8b15,
+            Self::Unknown(hash) => *hash,
         }
+    }
+}
+
+impl BymlDecode for HairGender {
+    fn decode(value: &Value) -> Result<Self> {
+        Ok(match u32::decode(value)? {
+            0xa9021713 => Self::Both,
+            0x0ddcbe76 => Self::Male,
+            0x3b1f8b15 => Self::Female,
+            hash => Self::Unknown(hash),
+        })
     }
 }
 
@@ -489,9 +537,69 @@ pub enum HairPartType {
     UpperCenter = 0x9315920f,
     UpperLeft = 0x5eb80c96,
     UpperRight = 0x708fa072,
+    Unknown(u32),
 }
 
-#[derive(Debug, Clone, ToByml, Deserialize, JsonSchema, Default, PartialEq)]
+impl HairPartType {
+    pub fn hash_u32(&self) -> u32 {
+        match self {
+            Self::Right => 0x8eb27afa,
+            Self::Both => 0xa9021713,
+            Self::Left => 0x63a5d310,
+            Self::Center => 0x6e9ad537,
+            Self::MiddleLeft => 0x1e4ce47d,
+            Self::MiddleRight => 0x2be4a44d,
+            Self::MiddleBoth => 0x444fff10,
+            Self::MiddleCenter => 0xa5c801e3,
+            Self::LowerBoth => 0xb3ed42ab,
+            Self::LowerLeft => 0x3e2e5102,
+            Self::LowerRight => 0x549acbdc,
+            Self::LowerCenter => 0x0d91960a,
+            Self::UpperBoth => 0x8f1f2325,
+            Self::UpperCenter => 0x9315920f,
+            Self::UpperLeft => 0x5eb80c96,
+            Self::UpperRight => 0x708fa072,
+            Self::Unknown(hash) => *hash,
+        }
+    }
+    fn from_hash(hash: u32) -> Self {
+        let known = [
+            Self::Right,
+            Self::Both,
+            Self::Left,
+            Self::Center,
+            Self::MiddleLeft,
+            Self::MiddleRight,
+            Self::MiddleBoth,
+            Self::MiddleCenter,
+            Self::LowerBoth,
+            Self::LowerLeft,
+            Self::LowerRight,
+            Self::LowerCenter,
+            Self::UpperBoth,
+            Self::UpperCenter,
+            Self::UpperLeft,
+            Self::UpperRight,
+        ];
+        known
+            .into_iter()
+            .find(|k| k.hash_u32() == hash)
+            .unwrap_or(Self::Unknown(hash))
+    }
+}
+impl<T: BymlDecode> BymlDecode for BTreeMap<HairPartType, T> {
+    fn decode(value: &Value) -> Result<Self> {
+        let Value::Hash32(values) = value else {
+            anyhow::bail!("expected hashed enum map");
+        };
+        values
+            .iter()
+            .map(|(key, value)| Ok((HairPartType::from_hash(*key), T::decode(value)?)))
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, ToByml, FromByml, Deserialize, JsonSchema, Default, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Vector2f {
     #[byml(default = 0.0)]
@@ -501,7 +609,7 @@ pub struct Vector2f {
     pub y: f32,
 }
 
-#[derive(Debug, Clone, ToByml, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, ToByml, FromByml, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PartsModelUnitParam {
     #[byml(skip_none)]
@@ -543,11 +651,16 @@ impl PartsModelUnitParam {
     }
 }
 
-#[derive(Debug, Clone, ToByml, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, ToByml, FromByml, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
+#[serde(default)]
 pub struct HairPartsAttachInfo {
+    pub editor_lower_icon_name: String,
+    pub editor_middle_icon_name: String,
     pub editor_upper_icon_name: String,
     pub hair_parts_name: String,
+    pub is_attachable_lower: bool,
+    pub is_attachable_middle: bool,
     pub is_attachable_upper: bool,
 }
 

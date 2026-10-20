@@ -22,7 +22,9 @@ impl CategoryRegistry {
     }
 
     pub fn into_all(self) -> Vec<Box<dyn CategoryDef>> {
-        self.entries.into_values().collect()
+        let mut entries: Vec<_> = self.entries.into_values().collect();
+        entries.sort_by(|a, b| a.category_name().cmp(b.category_name()));
+        entries
     }
 
     pub fn all(&self) -> impl Iterator<Item = &dyn CategoryDef> {

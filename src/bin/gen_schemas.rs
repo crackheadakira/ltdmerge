@@ -1,4 +1,4 @@
-use ltdmerge::categories::{EarDef, EyeDef, FacelineDef, HairFrontDef};
+use ltdmerge::categories::{EarDef, EyeDef, FacelineDef, HairBackDef, HairFrontDef};
 use ltdmerge::registry::CategoryRegistry;
 use std::fs;
 use std::path::Path;
@@ -7,6 +7,7 @@ fn main() -> anyhow::Result<()> {
     let mut registry = CategoryRegistry::new();
     registry.register(FacelineDef);
     registry.register(HairFrontDef);
+    registry.register(HairBackDef);
     registry.register(EyeDef);
     registry.register(EarDef);
 

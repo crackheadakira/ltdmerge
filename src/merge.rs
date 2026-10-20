@@ -1,13 +1,12 @@
 use crate::category::{CategoryDef, i32_field};
-use crate::engine::MiiMergeEngine;
-use crate::rstbl::alloc_size;
+use crate::engine::{MiiMergeEngine, rename_resource};
 use crate::types::CustomModNamespace;
 use crate::util::*;
 use anyhow::{Context, Result, bail};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use tomolib::formats::bntx::Bntx;
-use tomolib::formats::byml::{Byml, Endian, Value};
+use tomolib::formats::bntx::{Bntx, Texture};
+use tomolib::formats::byml::{Byml, Value};
 use tomolib::formats::rstbl::Rstbl;
 
 pub fn run(
@@ -15,371 +14,625 @@ pub fn run(
     out_dir: PathBuf,
     categories: Vec<Box<dyn CategoryDef>>,
 ) -> Result<()> {
-    if mod_dirs.len() < 2 {
-        bail!("merge requires at least two input mod directories");
+    run_with_base(mod_dirs, out_dir, categories, None)
+}
+
+pub fn run_with_base(
+    mod_dirs: Vec<PathBuf>,
+    out_dir: PathBuf,
+    mut categories: Vec<Box<dyn CategoryDef>>,
+    base: Option<&Path>,
+) -> Result<()> {
+    anyhow::ensure!(
+        mod_dirs.len() >= 2,
+        "merge requires at least two input mod directories"
+    );
+
+    let destination = Path::new("mods").join(&out_dir);
+    let destination = std::path::absolute(&destination)?;
+    for input in &mod_dirs {
+        let input = input.canonicalize()?;
+
+        anyhow::ensure!(
+            !destination.starts_with(&input),
+            "output must not be inside an input mod"
+        );
     }
 
-    println!("Merging {} mods -> {}", mod_dirs.len(), out_dir.display());
+    categories.sort_by(|a, b| a.category_name().cmp(b.category_name()));
+    let mut mods = Vec::new();
 
-    let mut custom_mods = Vec::new();
-    for (idx, dir) in mod_dirs.iter().enumerate() {
-        if let Some(loaded_mod) = CustomModNamespace::load(idx, dir, &categories)? {
-            custom_mods.push(loaded_mod);
+    for (id, dir) in mod_dirs.iter().enumerate() {
+        if let Some(m) = CustomModNamespace::load(id, dir, &categories)? {
+            mods.push(m);
         }
     }
+    let mut engine = MiiMergeEngine::new(mods, categories);
+    let mut reserved: BTreeMap<String, BTreeSet<i32>> = BTreeMap::new();
+    let mut row_template = None;
+    let mut rows = BTreeMap::new();
+    let mut baseline_rows = BTreeMap::new();
 
-    let mut engine = MiiMergeEngine::new(custom_mods, categories);
-    engine.compute_allocations()?;
-    engine.execute_remap()?;
+    if let Some(base) = base {
+        anyhow::ensure!(base.is_dir(), "--base is not a directory");
 
-    let mut written_sizes: BTreeMap<String, usize> = BTreeMap::new();
-
-    let rstbl_rel_path = Path::new("romfs").join(PATH_RSTBL_BYML);
-    if let Some(base_mod_dir) = mod_dirs
-        .iter()
-        .rev()
-        .find(|d| d.join(&rstbl_rel_path).exists())
-    {
-        let raw_bytes = read_and_decompress(base_mod_dir, rstbl_rel_path.to_str().unwrap())?;
-        let mut doc = byml_parse(&raw_bytes)?;
-        let arr = byml_root_array_mut(&mut doc)?;
-
-        let mut entries_to_purge: BTreeMap<String, BTreeSet<i32>> = BTreeMap::new();
-        for ((cat_name, _, old_idx), new_idx) in &engine.allocation_map {
-            let set = entries_to_purge.entry(cat_name.clone()).or_default();
-            set.insert(*old_idx);
-            set.insert(*new_idx);
-        }
-
-        arr.retain(|val| {
-            if let Value::Dict(map) = val {
-                if let Some(Value::String(cat_name)) = map.get("Category") {
-                    if let Some(purge_set) = entries_to_purge.get(cat_name) {
-                        if let Some(idx) = i32_field(map, "PartsIndex") {
-                            if purge_set.contains(&idx) {
-                                return false;
-                            }
-                        }
-                    }
-                }
+        if asset_exists(base, PATH_RSTBL_BYML) {
+            let doc = byml_parse(&read_and_decompress(base, PATH_RSTBL_BYML)?)?;
+            baseline_rows = rows_by_name(&doc)?;
+            for row in baseline_rows.values() {
+                reserve_row(row, &engine.categories, &mut reserved);
             }
-            true
-        });
-
-        for custom_mod in &engine.mods {
-            for cat in &engine.categories {
-                if let Some(data) = custom_mod.categories.get(cat.category_name()) {
-                    for entry in &data.rstbl_entries {
-                        arr.push(cat.build_rstbl_value(entry));
-                    }
-                }
-            }
-        }
-
-        arr.sort_by(|a, b| {
-            fn get_row_id(val: &Value) -> &str {
-                if let Value::Dict(m) = val {
-                    if let Some(Value::String(s)) = m.get("__RowId") {
-                        return s.as_str();
-                    }
-                }
-
-                ""
-            }
-
-            get_row_id(a).cmp(get_row_id(b))
-        });
-
-        let merged_bytes = byml_to_bytes(&doc)?;
-        let size = compress_and_write(&out_dir, rstbl_rel_path.to_str().unwrap(), &merged_bytes)?;
-        written_sizes.insert(clean_name(PATH_RSTBL_BYML).to_string(), size);
-    }
-
-    let pack_rel_path = Path::new("romfs").join(PATH_MII_PARTS_PACK);
-    if let Some(base_mod_dir) = mod_dirs
-        .iter()
-        .rev()
-        .find(|d| d.join(&pack_rel_path).exists())
-    {
-        let raw_bytes = read_and_decompress(base_mod_dir, pack_rel_path.to_str().unwrap())?;
-        let base_sarc = sarc_parse(raw_bytes)?;
-        let mut merged_entries = sarc_entries_owned(&base_sarc);
-
-        let mut files_to_remove = BTreeSet::new();
-        for ((cat_name, _, old_idx), new_idx) in &engine.allocation_map {
-            if let Some(cat) = engine
-                .categories
-                .iter()
-                .find(|c| c.category_name() == cat_name)
-            {
-                files_to_remove.insert(cat.pack_path(&cat.part_name(*old_idx as u32)));
-                files_to_remove.insert(cat.pack_path(&cat.part_name(*new_idx as u32)));
-            }
-        }
-
-        merged_entries.retain(|key, _| !files_to_remove.contains(key));
-
-        for custom_mod in &engine.mods {
-            for cat in &engine.categories {
-                if let Some(data) = custom_mod.categories.get(cat.category_name()) {
-                    for (parts_idx, entry) in &data.pack_parts {
-                        let file_name = cat.part_name(*parts_idx as u32);
-                        let sarc_internal_key = cat.pack_path(&file_name);
-
-                        let doc_wrapper = Byml {
-                            root: cat.build_pack_value(entry),
-                            endian: Endian::Little,
-                            version: 7,
-                        };
-
-                        merged_entries.insert(sarc_internal_key, byml_to_bytes(&doc_wrapper)?);
-                    }
-                }
-            }
-        }
-
-        let packed_sarc_bytes = sarc_pack(&merged_entries, &base_sarc)?;
-        let size = compress_and_write(
-            &out_dir,
-            pack_rel_path.to_str().unwrap(),
-            &packed_sarc_bytes,
-        )?;
-
-        written_sizes.insert(clean_name(PATH_MII_PARTS_PACK).to_string(), size);
-    }
-
-    for cat in &engine.categories {
-        let order_rel_path = Path::new("romfs").join(cat.path_parts_order());
-        if let Some(base_mod_dir) = mod_dirs
-            .iter()
-            .rev()
-            .find(|d| d.join(&order_rel_path).exists())
-        {
-            let raw_bytes = read_and_decompress(base_mod_dir, order_rel_path.to_str().unwrap())?;
-            let mut doc = byml_parse(&raw_bytes)?;
-            let mut unified_order = parse_parts_order_array(&raw_bytes)?;
-
-            for custom_mod in &engine.mods {
-                for (cat_name, custom_idx) in &custom_mod.custom_order_indices {
-                    if cat_name == cat.category_name()
-                        && !unified_order.contains(&(*custom_idx as i32))
-                    {
-                        unified_order.push(*custom_idx as i32);
-                    }
-                }
-            }
-
-            let array_values: Vec<Value> = unified_order.into_iter().map(Value::I32).collect();
-            byml_root_dict_mut(&mut doc)?.insert("Order".to_string(), Value::Array(array_values));
-
-            let ordered_bytes = byml_to_bytes(&doc)?;
-            let size =
-                compress_and_write(&out_dir, order_rel_path.to_str().unwrap(), &ordered_bytes)?;
-
-            written_sizes.insert(clean_name(cat.path_parts_order()).to_string(), size);
-        }
-    }
-
-    for custom_mod in &engine.mods {
-        for (head_name, bfres) in &custom_mod.models {
-            let out_rel_path = format!("romfs/Model/{head_name}.bfres.zs");
-            let raw_bfres_payload = bfres.write().context("BFRES layout serialization failed")?;
-            let size = compress_and_write(&out_dir, &out_rel_path, &raw_bfres_payload)?;
-            written_sizes.insert(format!("Model/{head_name}.bfres"), size);
+            rows = baseline_rows.clone();
+            row_template = Some(doc);
         }
     }
 
     for dir in &mod_dirs {
-        for entry in walkdir::WalkDir::new(dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
+        let rel = format!("romfs/{PATH_RSTBL_BYML}");
+        if !asset_exists(dir, &rel) {
+            continue;
+        }
+
+        let doc = byml_parse(&read_and_decompress(dir, &rel)?)?;
+        for (name, row) in rows_by_name(&doc)? {
+            if is_marked(&row) {
+                continue;
+            }
+            reserve_row(&row, &engine.categories, &mut reserved);
+            merge_named(&mut rows, name, row, &baseline_rows, "RSDB row");
+        }
+
+        row_template = Some(doc);
+    }
+
+    engine.reserve_indices(reserved);
+    engine.compute_allocations()?;
+    engine.execute_remap()?;
+
+    let mut outputs: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    if let Some(mut doc) = row_template {
+        for m in &engine.mods {
+            for cat in &engine.categories {
+                if let Some(data) = m.categories.get(cat.category_name()) {
+                    for row in &data.rstbl_entries {
+                        row.validate()?;
+
+                        let key = if row.row_id.is_empty() {
+                            cat.row_id(row.parts_index as u32)
+                        } else {
+                            row.row_id.clone()
+                        };
+
+                        anyhow::ensure!(
+                            !rows.contains_key(&key),
+                            "remapped row collides with existing resource: {key}"
+                        );
+
+                        rows.insert(key, cat.build_rstbl_value(row));
+                    }
+                }
+            }
+        }
+
+        doc.root = Value::Array(rows.into_values().collect());
+        outputs.insert(PATH_RSTBL_BYML.into(), byml_to_bytes(&doc)?);
+    }
+
+    let mut pack_template = None;
+    let mut members = BTreeMap::new();
+    let mut baseline_members = BTreeMap::new();
+    if let Some(base) = base.filter(|b| asset_exists(b, PATH_MII_PARTS_PACK)) {
+        let pack = sarc_parse(read_and_decompress(base, PATH_MII_PARTS_PACK)?)?;
+        baseline_members = sarc_entries_owned(&pack).into_iter().collect();
+        members = baseline_members.clone();
+        pack_template = Some(pack);
+    }
+
+    for (id, dir) in mod_dirs.iter().enumerate() {
+        let rel = format!("romfs/{PATH_MII_PARTS_PACK}");
+        if !asset_exists(dir, &rel) {
+            continue;
+        }
+
+        let pack = sarc_parse(read_and_decompress(dir, &rel)?)?;
+
+        for (name, bytes) in sarc_entries_owned(&pack) {
+            let owned = owned_pack_remap(&engine, id, &name);
+            let (name, bytes) = if let Some((cat, old, new)) = owned {
+                if old == new {
+                    (name, bytes)
+                } else {
+                    let entry = &engine
+                        .mods
+                        .iter()
+                        .find(|m| m.mod_index == id)
+                        .unwrap()
+                        .categories[cat.category_name()]
+                    .pack_parts[&new];
+
+                    let source = byml_parse(&bytes)?;
+                    let doc = Byml {
+                        root: cat.build_pack_value(entry),
+                        endian: source.endian,
+                        version: source.version,
+                    };
+
+                    (
+                        cat.pack_path(&cat.part_name(new as u32)),
+                        byml_to_bytes(&doc)?,
+                    )
+                }
+            } else {
+                (name, bytes)
+            };
+
+            if owned.is_some() {
+                anyhow::ensure!(
+                    !members.contains_key(&name)
+                        || baseline_members.get(&name) == members.get(&name),
+                    "remapped packed part collides: {name}"
+                );
+                members.insert(name, bytes);
+            } else {
+                merge_named(&mut members, name, bytes, &baseline_members, "SARC member");
+            }
+        }
+
+        pack_template = Some(pack);
+    }
+
+    if let Some(pack) = pack_template {
+        let entries = members.into_iter().collect();
+        outputs.insert(PATH_MII_PARTS_PACK.into(), sarc_pack(&entries, &pack)?);
+    }
+
+    for cat in &engine.categories {
+        let rel = format!("romfs/{}", cat.path_parts_order());
+        let mut template = None;
+        let mut order = Vec::new();
+
+        if let Some(base) = base.filter(|b| asset_exists(b, cat.path_parts_order())) {
+            let bytes = read_and_decompress(base, cat.path_parts_order())?;
+            order = parse_parts_order_array(&bytes)?;
+            template = Some(byml_parse(&bytes)?);
+        }
+
+        for (id, dir) in mod_dirs.iter().enumerate() {
+            if !asset_exists(dir, &rel) {
+                continue;
+            }
+
+            let bytes = read_and_decompress(dir, &rel)?;
+            let source = parse_parts_order_array(&bytes)?;
+            let mapped: Vec<_> = source
+                .into_iter()
+                .map(|old| {
+                    engine
+                        .allocation_map
+                        .get(&(cat.category_name().into(), id, old))
+                        .copied()
+                        .unwrap_or(old)
+                })
+                .collect();
+
+            let previous_owned: Vec<_> = order
+                .iter()
+                .copied()
+                .filter(|i| {
+                    engine
+                        .allocation_map
+                        .iter()
+                        .any(|((category, _, _), new)| category == cat.category_name() && new == i)
+                })
+                .collect();
+
+            order = mapped;
+
+            for index in previous_owned {
+                if !order.contains(&index) {
+                    order.push(index);
+                }
+            }
+
+            template = Some(byml_parse(&bytes)?);
+        }
+
+        if let Some(mut doc) = template {
+            let mut seen = BTreeSet::new();
+            order.retain(|i| seen.insert(*i));
+            byml_root_dict_mut(&mut doc)?.insert(
+                "Order".into(),
+                Value::Array(order.into_iter().map(|i| Value::U32(i as u32)).collect()),
+            );
+            outputs.insert(cat.path_parts_order().into(), byml_to_bytes(&doc)?);
+        }
+    }
+
+    for (path, icons) in [
+        (PATH_MII_EDITOR_ICON, true),
+        ("Tex/Pack/MiiParts.bntx.zs", false),
+    ] {
+        if let Some(bytes) = merge_textures(path, icons, &mod_dirs, base, &engine)? {
+            outputs.insert(path.into(), bytes);
+        }
+    }
+
+    let managed: BTreeSet<_> = outputs
+        .keys()
+        .map(|s| clean_name(s).to_owned())
+        .chain([clean_name(PATH_RSIZETABLE).to_owned()])
+        .collect();
+    let mut copied = BTreeMap::new();
+
+    for (id, dir) in mod_dirs.iter().enumerate() {
+        let model_names = engine.resource_renames(id, false);
+        for entry in walkdir::WalkDir::new(dir.join("romfs")) {
+            let entry = entry?;
             if !entry.file_type().is_file() {
                 continue;
             }
-            let rel_path = entry.path().strip_prefix(dir)?;
-            let rel_str = rel_path.to_str().unwrap_or("");
-            let clean = clean_name(rel_str);
 
-            if clean.starts_with("Model/") && clean.ends_with(".bfres") {
-                if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
-                    let num_str: String = stem.chars().filter(|c| c.is_ascii_digit()).collect();
-                    if let Ok(parts_idx) = num_str.parse::<i32>() {
-                        let is_vanilla = engine
-                            .categories
-                            .iter()
-                            .any(|c| parts_idx <= c.vanilla_max_parts_index());
-                        if is_vanilla {
-                            let raw_bytes = read_and_decompress(dir, rel_str)?;
-                            let size = compress_and_write(&out_dir, rel_str, &raw_bytes)?;
-                            written_sizes.insert(clean.to_string(), size);
-                        }
-                    }
-                }
+            let rel = entry
+                .path()
+                .strip_prefix(dir.join("romfs"))?
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            if managed.contains(clean_name(&rel)) {
+                continue;
             }
-        }
-    }
 
-    let parts_bntx_rel = Path::new("romfs").join("Tex/Pack/MiiParts.bntx.zs");
-    if let Some(base_mod_dir) = mod_dirs
-        .iter()
-        .rev()
-        .find(|d| d.join(&parts_bntx_rel).exists())
-    {
-        println!("Merging global flat texture atlas sheet: MiiParts.bntx.zs");
-        let raw_bytes = read_and_decompress(base_mod_dir, parts_bntx_rel.to_str().unwrap())?;
-        let mut base_bntx =
-            Bntx::parse(&raw_bytes).context("Failed to parse base MiiParts.bntx")?;
-
-        let mut textures_to_remove = BTreeSet::new();
-        for ((cat_name, _, old_idx), new_idx) in &engine.allocation_map {
-            if let Some(cat) = engine
-                .categories
-                .iter()
-                .find(|c| c.category_name() == cat_name)
+            let mut key = rel.clone();
+            if let Some(stem) = clean_name(&rel)
+                .strip_prefix("Model/")
+                .and_then(|s| s.strip_suffix(".bfres"))
             {
-                textures_to_remove.insert(cat.internal_model_name(*old_idx as u32));
-                textures_to_remove.insert(cat.internal_model_name(*new_idx as u32));
+                let renamed = rename_resource(stem, &model_names);
+                key = format!(
+                    "Model/{renamed}.bfres{}",
+                    if rel.ends_with(".zs") { ".zs" } else { "" }
+                );
             }
-        }
 
-        base_bntx
-            .textures
-            .retain(|tex| !textures_to_remove.contains(&tex.name));
+            let bytes = read_and_decompress(&dir.join("romfs"), &rel)?;
+            let baseline = if let Some(base) = base.filter(|b| asset_exists(b, &rel)) {
+                Some(read_and_decompress(base, &rel)?)
+            } else {
+                None
+            };
 
-        for custom_mod in &engine.mods {
-            let mod_idx = custom_mod.mod_index;
-            let target_path = mod_dirs[mod_idx].join(&parts_bntx_rel);
-
-            if target_path.exists() {
-                let loaded_bytes =
-                    read_and_decompress(&mod_dirs[mod_idx], parts_bntx_rel.to_str().unwrap())?;
-                if let Ok(mod_bntx) = Bntx::parse(&loaded_bytes) {
-                    for mut tex in mod_bntx.textures {
-                        for cat in &engine.categories {
-                            if cat.matches_texture_name(&tex.name) {
-                                let num_str: String =
-                                    tex.name.chars().filter(|c| c.is_ascii_digit()).collect();
-                                if let Ok(old_idx) = num_str.parse::<i32>() {
-                                    if let Some(&new_idx) = engine.allocation_map.get(&(
-                                        cat.category_name().to_string(),
-                                        mod_idx,
-                                        old_idx,
-                                    )) {
-                                        let old_token = cat.internal_model_name(old_idx as u32);
-                                        let new_token = cat.internal_model_name(new_idx as u32);
-
-                                        tex.name = tex.name.replace(&old_token, &new_token);
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                        base_bntx.textures.push(tex);
-                    }
-                }
-            }
-        }
-
-        let merged_bntx_bytes = base_bntx
-            .write()
-            .context("BNTX layout generation compression failed")?;
-
-        let size = compress_and_write(
-            &out_dir,
-            parts_bntx_rel.to_str().unwrap(),
-            &merged_bntx_bytes,
-        )?;
-
-        written_sizes.insert(clean_name("romfs/Tex/Pack/MiiParts.bntx").to_string(), size);
-    }
-
-    let icon_rel_path = Path::new("romfs").join(PATH_MII_EDITOR_ICON);
-    if let Some(base_mod) = engine.mods.iter().find(|m| m.custom_icon.is_some()) {
-        let mut base_bntx = base_mod.custom_icon.clone().unwrap();
-
-        for custom_mod in &engine.mods {
-            if custom_mod.mod_index == base_mod.mod_index {
+            if baseline.as_ref() == Some(&bytes) && copied.contains_key(&key) {
                 continue;
             }
 
-            if let Some(ref mod_bntx) = custom_mod.custom_icon {
-                for tex in &mod_bntx.textures {
-                    let num_str: String = tex.name.chars().filter(|c| c.is_ascii_digit()).collect();
-                    if let Ok(idx) = num_str.parse::<i32>() {
-                        let is_modded = engine
-                            .categories
-                            .iter()
-                            .any(|cat| idx > cat.vanilla_max_parts_index());
+            if copied.get(&key).is_some_and(|old| old != &bytes) {
+                eprintln!("warning: resource {key}: last input wins");
+            }
 
-                        if is_modded {
-                            base_bntx.textures.push(tex.clone());
-                        }
-                    }
-                }
+            copied.insert(key, bytes);
+        }
+    }
+
+    outputs.extend(copied);
+
+    let mut table = None;
+    let mut crc = BTreeMap::new();
+    let mut paths = BTreeMap::new();
+    let mut baseline_crc = BTreeMap::new();
+    let mut baseline_paths = BTreeMap::new();
+
+    if let Some(base) = base.filter(|b| asset_exists(b, PATH_RSIZETABLE)) {
+        let t = Rstbl::parse(&read_and_decompress(base, PATH_RSIZETABLE)?)?;
+        for e in t.crc_entries() {
+            baseline_crc.insert(e.hash, e.size);
+        }
+
+        for e in t.path_entries() {
+            baseline_paths.insert(e.name.clone(), e.size);
+        }
+
+        crc = baseline_crc.clone();
+        paths = baseline_paths.clone();
+        table = Some(t);
+    }
+
+    for dir in &mod_dirs {
+        let rel = format!("romfs/{PATH_RSIZETABLE}");
+        if !asset_exists(dir, &rel) {
+            continue;
+        }
+
+        let t = Rstbl::parse(&read_and_decompress(dir, &rel)?)?;
+        for e in t.crc_entries() {
+            if baseline_crc.get(&e.hash) != Some(&e.size) || !crc.contains_key(&e.hash) {
+                crc.insert(e.hash, e.size);
             }
         }
 
-        let merged_bntx_bytes = base_bntx
-            .write()
-            .context("BNTX execution compression failed")?;
-        let size = compress_and_write(
-            &out_dir,
-            icon_rel_path.to_str().unwrap(),
-            &merged_bntx_bytes,
-        )?;
+        for e in t.path_entries() {
+            if baseline_paths.get(&e.name) != Some(&e.size) || !paths.contains_key(&e.name) {
+                paths.insert(e.name.clone(), e.size);
+            }
+        }
 
-        written_sizes.insert(clean_name(PATH_MII_EDITOR_ICON).to_string(), size);
+        table = Some(t);
     }
 
-    let rsizetable_rel = Path::new("romfs").join(PATH_RSIZETABLE);
-    if let Some(base_mod_dir) = mod_dirs
+    let mut table =
+        table.context("merging requires a resource size table in an input mod or --base")?;
+    table.set_crc_entries(
+        crc.into_iter()
+            .map(|(hash, size)| tomolib::formats::rstbl::CrcEntry { hash, size })
+            .collect(),
+    );
+
+    table.set_path_entries(
+        paths
+            .into_iter()
+            .map(|(name, size)| tomolib::formats::rstbl::PathEntry { name, size })
+            .collect(),
+    );
+
+    for (path, bytes) in &outputs {
+        patch_rstbl(&mut table, path, bytes.len())?;
+    }
+
+    let mut table_bytes = Vec::new();
+    table.write(&mut table_bytes)?;
+    outputs.insert(PATH_RSIZETABLE.into(), table_bytes);
+
+    validate_output(&outputs, &engine, base)?;
+
+    let encoded: Vec<_> = outputs
         .iter()
-        .rev()
-        .find(|d| d.join(&rsizetable_rel).exists())
-    {
-        println!("Patching and re-compiling rsizetable...");
-        let first_bytes = read_and_decompress(base_mod_dir, rsizetable_rel.to_str().unwrap())?;
-        let mut merged_tbl = Rstbl::parse(&first_bytes).context("rsizetable parse")?;
+        .map(|(path, bytes)| {
+            Ok((
+                path,
+                if path.ends_with(".zs") {
+                    zs_compress(bytes)?
+                } else {
+                    bytes.clone()
+                },
+            ))
+        })
+        .collect::<Result<_>>()?;
 
-        let pack_clean = clean_name(PATH_MII_PARTS_PACK);
-        for (clean_path, decompressed_size) in &written_sizes {
-            if clean_path == pack_clean {
-                continue;
-            }
-
-            let calculated = alloc_size(clean_path, *decompressed_size)?;
-            merged_tbl.set(clean_path, calculated);
-        }
-
-        let mut buf = Vec::new();
-        merged_tbl
-            .write(&mut buf)
-            .context("rsizetable write verification failure")?;
-        compress_and_write(&out_dir, rsizetable_rel.to_str().unwrap(), &buf)?;
+    for (path, bytes) in encoded {
+        let path = destination.join("romfs").join(path);
+        std::fs::create_dir_all(path.parent().unwrap())?;
+        std::fs::write(&path, bytes).with_context(|| format!("writing {}", path.display()))?;
     }
 
-    println!("Done.");
+    println!(
+        "Merged {} mods -> {}",
+        mod_dirs.len(),
+        destination.display()
+    );
+
+    Ok(())
+}
+
+fn is_marked(value: &Value) -> bool {
+    matches!(value,Value::Dict(m) if matches!(m.get("IsLtdmergeGen"),Some(Value::Bool(true))))
+}
+
+fn rows_by_name(doc: &Byml) -> Result<BTreeMap<String, Value>> {
+    let mut result = BTreeMap::new();
+    for value in byml_root_array(doc)? {
+        let Value::Dict(map) = value else {
+            bail!("invalid MiiParts row")
+        };
+
+        let Some(Value::String(name)) = map.get("__RowId") else {
+            bail!("MiiParts row missing __RowId")
+        };
+
+        anyhow::ensure!(
+            result.insert(name.clone(), value.clone()).is_none(),
+            "duplicate MiiParts row {name}"
+        );
+    }
+
+    Ok(result)
+}
+
+fn reserve_row(
+    value: &Value,
+    categories: &[Box<dyn CategoryDef>],
+    reserved: &mut BTreeMap<String, BTreeSet<i32>>,
+) {
+    let Value::Dict(map) = value else { return };
+    let Some(index) = i32_field(map, "PartsIndex") else {
+        return;
+    };
+
+    for cat in categories {
+        if matches!(map.get("Category"),Some(Value::String(s)) if s==cat.internal_category_name()) {
+            reserved
+                .entry(cat.category_name().into())
+                .or_default()
+                .insert(index);
+        }
+    }
+}
+
+fn merge_named<T: PartialEq>(
+    dest: &mut BTreeMap<String, T>,
+    name: String,
+    value: T,
+    baseline: &BTreeMap<String, T>,
+    kind: &str,
+) {
+    if baseline.get(&name) == Some(&value) && dest.contains_key(&name) {
+        return;
+    }
+
+    if let Some(previous) = dest.get(&name) {
+        if previous != &value && baseline.get(&name) != Some(previous) {
+            eprintln!("warning: {kind} {name}: last input wins");
+        }
+    }
+
+    dest.insert(name, value);
+}
+
+fn owned_pack_remap<'a>(
+    engine: &'a MiiMergeEngine,
+    id: usize,
+    name: &str,
+) -> Option<(&'a dyn CategoryDef, i32, i32)> {
+    for cat in &engine.categories {
+        for ((category, owner, old), new) in &engine.allocation_map {
+            if category == cat.category_name()
+                && *owner == id
+                && name == cat.pack_path(&cat.part_name(*old as u32))
+            {
+                return Some((cat.as_ref(), *old, *new));
+            }
+        }
+    }
+
+    None
+}
+
+fn merge_textures(
+    path: &str,
+    icons: bool,
+    dirs: &[PathBuf],
+    base: Option<&Path>,
+    engine: &MiiMergeEngine,
+) -> Result<Option<Vec<u8>>> {
+    let mut template = None;
+    let mut textures: BTreeMap<String, Texture> = BTreeMap::new();
+    let mut baseline = BTreeMap::new();
+
+    if let Some(base) = base.filter(|b| asset_exists(b, path)) {
+        let bntx = Bntx::parse(&read_and_decompress(base, path)?)?;
+        for t in &bntx.textures {
+            baseline.insert(t.name.clone(), t.clone());
+        }
+
+        textures = baseline.clone();
+        template = Some(bntx);
+    }
+
+    for (id, dir) in dirs.iter().enumerate() {
+        let rel = format!("romfs/{path}");
+        if !asset_exists(dir, &rel) {
+            continue;
+        }
+
+        let bntx = Bntx::parse(&read_and_decompress(dir, &rel)?)?;
+        let names = engine.resource_renames(id, icons);
+        for mut texture in bntx.textures.clone() {
+            texture.name = rename_resource(&texture.name, &names);
+            merge_named(
+                &mut textures,
+                texture.name.clone(),
+                texture,
+                &baseline,
+                "texture",
+            );
+        }
+
+        template = Some(bntx);
+    }
+
+    template
+        .map(|mut bntx| {
+            bntx.textures = textures.into_values().collect();
+            Ok(bntx.write()?)
+        })
+        .transpose()
+}
+
+fn validate_output(
+    outputs: &BTreeMap<String, Vec<u8>>,
+    engine: &MiiMergeEngine,
+    base: Option<&Path>,
+) -> Result<()> {
+    let icon_names = outputs
+        .get(PATH_MII_EDITOR_ICON)
+        .map(|b| {
+            Bntx::parse(b).map(|b| {
+                b.textures
+                    .into_iter()
+                    .map(|t| t.name)
+                    .collect::<BTreeSet<_>>()
+            })
+        })
+        .transpose()?;
+
+    let texture_names = outputs
+        .get("Tex/Pack/MiiParts.bntx.zs")
+        .map(|b| {
+            Bntx::parse(b).map(|b| {
+                b.textures
+                    .into_iter()
+                    .map(|t| t.name)
+                    .collect::<BTreeSet<_>>()
+            })
+        })
+        .transpose()?;
+
+    let members = outputs
+        .get(PATH_MII_PARTS_PACK)
+        .map(|b| sarc_parse(b.clone()).map(|p| sarc_entries_owned(&p)))
+        .transpose()?;
+
+    for m in &engine.mods {
+        for cat in &engine.categories {
+            if let Some(data) = m.categories.get(cat.category_name()) {
+                for entry in &data.rstbl_entries {
+                    if let Some(members) = &members {
+                        anyhow::ensure!(
+                            members.contains_key(&cat.pack_path(&entry.file_name)),
+                            "missing packed part {}",
+                            entry.file_name
+                        );
+                    }
+
+                    for name in [&entry.editor_icon_name, &entry.editor_mask_icon_name]
+                        .into_iter()
+                        .flatten()
+                        .filter(|s| !s.is_empty())
+                    {
+                        if let Some(names) = &icon_names {
+                            anyhow::ensure!(names.contains(name), "missing editor icon {name}");
+                        }
+                    }
+
+                    if let Some(name) = entry.texture_name.as_ref().filter(|s| !s.is_empty()) {
+                        if let Some(names) = &texture_names {
+                            anyhow::ensure!(names.contains(name), "missing parts texture {name}");
+                        }
+                    }
+
+                    if base.is_some() && data.pack_parts.contains_key(&entry.parts_index) {
+                        data.pack_parts[&entry.parts_index].validate()?;
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
 pub fn parse_parts_order_array(bytes: &[u8]) -> Result<Vec<i32>> {
     let doc = byml_parse(bytes)?;
     let root = byml_root_dict(&doc)?;
-    let order_val = root
-        .get("Order")
-        .context("PartsOrder missing 'Order' key")?;
 
-    match order_val {
-        Value::Array(arr) => arr
-            .iter()
-            .map(|v| match v {
-                Value::U32(n) => Ok(*n as i32),
-                Value::I32(n) => Ok(*n),
-                _ => bail!("PartsOrder contains an unexpected element type"),
-            })
-            .collect(),
+    let Some(Value::Array(values)) = root.get("Order") else {
+        bail!("PartsOrder missing Order array")
+    };
 
-        _ => bail!("PartsOrder 'Order' key is structurally not a valid array matrix"),
-    }
+    values
+        .iter()
+        .map(|v| match v {
+            Value::I32(i) if *i >= 0 => Ok(*i),
+            Value::U32(i) => Ok(i32::try_from(*i)?),
+            _ => bail!("invalid PartsOrder index"),
+        })
+        .collect()
 }

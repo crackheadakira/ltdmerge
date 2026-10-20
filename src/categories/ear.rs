@@ -64,6 +64,8 @@ impl CategoryDef for EarDef {
         entry.min_trans_y = 0;
         entry.max_trans_y = 31;
 
+        entry.is_ltdmerge_gen = true;
+
         entry
     }
 

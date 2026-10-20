@@ -16,8 +16,46 @@ pub fn is_zs(path: &str) -> bool {
 
 /// Read a file from disk, decompressing it if its path ends with .zs.
 pub fn read_and_decompress(base: &std::path::Path, rel: &str) -> Result<Vec<u8>> {
-    let raw = std::fs::read(base.join(rel)).with_context(|| format!("reading {rel}"))?;
-    if is_zs(rel) {
+    let requested = base.join(rel);
+    let actual = if requested.is_file() {
+        requested
+    } else {
+        base.join(rel.strip_suffix(".zs").unwrap_or(rel))
+    };
+
+    if !actual.is_file() && clean_name(rel).ends_with(".pack") {
+        let directory = base.join(
+            rel.strip_suffix(".zs")
+                .unwrap_or(rel)
+                .trim_end_matches(".pack"),
+        );
+
+        if directory.is_dir() {
+            let mut files = BTreeMap::new();
+            for entry in walkdir::WalkDir::new(&directory) {
+                let entry = entry?;
+                if entry.file_type().is_file() {
+                    let name = entry
+                        .path()
+                        .strip_prefix(&directory)?
+                        .to_string_lossy()
+                        .replace('\\', "/");
+                    files.insert(name, std::fs::read(entry.path())?);
+                }
+            }
+
+            let entries: Vec<_> = files
+                .iter()
+                .map(|(name, data)| sarc::PackEntry { name, data })
+                .collect();
+            let mut bytes = Vec::new();
+            sarc::write(&mut bytes, &entries, sarc::ByteOrder::Little, 4)?;
+            return Ok(bytes);
+        }
+    }
+
+    let raw = std::fs::read(&actual).with_context(|| format!("reading {}", actual.display()))?;
+    if actual.extension().is_some_and(|s| s == "zs") {
         zs_decompress(&raw)
     } else {
         Ok(raw)
@@ -74,8 +112,18 @@ pub fn patch_rstbl(rsizetable: &mut Rstbl, name: &str, size: usize) -> Result<()
 }
 
 pub fn clean_name(name: &str) -> &str {
+    let name = name.strip_prefix("romfs/").unwrap_or(name);
     name.strip_suffix(".zs").unwrap_or(name)
 }
+
+pub fn asset_exists(base: &std::path::Path, rel: &str) -> bool {
+    let raw = rel.strip_suffix(".zs").unwrap_or(rel);
+    base.join(rel).is_file()
+        || base.join(raw).is_file()
+        || (raw.ends_with(".pack") && base.join(raw.trim_end_matches(".pack")).is_dir())
+}
+
+use std::collections::BTreeMap;
 
 /// Parse a bfres from raw (already-decompressed) bytes.
 pub fn bfres_parse(bytes: &[u8]) -> Result<bfres::Bfres> {

@@ -59,7 +59,10 @@ pub fn mutate_asset_structures(
 
     let existing_indices = collect_category_indices(state.rstbl_doc, cat.parts_type_hash())?;
     let next_index = existing_indices.iter().copied().max().unwrap_or(0);
-    let next_index = std::cmp::max(next_index, cat.vanilla_max_parts_index() as u32) + 1;
+    let next_index = std::cmp::max(next_index, cat.vanilla_max_parts_index() as u32)
+        .checked_add(1)
+        .filter(|index| i32::try_from(*index).is_ok())
+        .context("category has exhausted the signed PartsIndex range")?;
 
     let part_filename = cat.part_name(next_index);
     let target_internal_token = cat.internal_model_name(next_index);
@@ -101,7 +104,7 @@ pub fn mutate_asset_structures(
         entry.editor_mask_icon_name = Some(final_game_icon_token);
     }
 
-    entry = cat.apply_category_defaults(next_index, entry);
+    entry = entry.with_category_defaults(next_index, cat)?;
 
     let mut romfs_files = BTreeMap::new();
     if is_bfres(&primary) {
@@ -169,6 +172,7 @@ pub fn mutate_asset_structures(
         }
     }
 
+    entry.validate()?;
     let root_array = byml_root_array_mut(state.rstbl_doc)?;
     root_array.push(entry.build_rstbl_value());
     root_array.sort_by(|a, b| row_id_of(a).cmp(row_id_of(b)));
@@ -176,7 +180,7 @@ pub fn mutate_asset_structures(
     let inner_bytes = byml_to_bytes(&Byml {
         version: 7,
         endian: tomolib::formats::byml::Endian::Little,
-        root: entry.build_pack_value(),
+        root: cat.build_pack_value(&entry),
     })?;
 
     state
@@ -395,10 +399,10 @@ fn collect_category_indices(doc: &Byml, target_hash: u32) -> Result<Vec<u32>> {
             if let Value::Dict(m) = entry {
                 if let Some(Value::U32(parts_type)) = m.get("PartsType") {
                     if *parts_type == target_hash {
-                        if let Some(Value::I32(idx)) = m.get("PartsIndex") {
-                            if *idx >= 0 {
-                                return Some(Ok(*idx as u32));
-                            }
+                        match m.get("PartsIndex") {
+                            Some(Value::I32(idx)) if *idx >= 0 => return Some(Ok(*idx as u32)),
+                            Some(Value::U32(idx)) => return Some(Ok(*idx)),
+                            _ => {}
                         }
                     }
                 }

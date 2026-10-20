@@ -73,6 +73,8 @@ impl CategoryDef for FacelineDef {
             entry.default_scale = 2;
         }
 
+        entry.is_ltdmerge_gen = true;
+
         entry
     }
 

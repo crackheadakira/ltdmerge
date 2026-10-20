@@ -25,6 +25,9 @@ enum Command {
     /// Merge N input mods into a single output mod, resolving index collisions
     /// across all categories automatically.
     Merge {
+        /// Optional clean ROMFS reference for detecting unchanged vanilla resources.
+        #[arg(long)]
+        base: Option<PathBuf>,
         /// Input mod directories (romfs layout). At least two required.
         #[arg(required = true, num_args = 2..)]
         mods: Vec<PathBuf>,
@@ -65,11 +68,11 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Merge { mods, out } => {
+        Command::Merge { mods, out, base } => {
             let registry = build_registry();
             let categories = registry.into_all();
 
-            merge::run(mods, out, categories)
+            merge::run_with_base(mods, out, categories, base.as_deref())
                 .context("Failed to merge custom asset modifications")?;
         }
 

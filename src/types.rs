@@ -107,7 +107,14 @@ impl CustomModNamespace {
                 let indices = parse_parts_order_array(&bytes)?;
 
                 for idx in indices {
-                    if idx > cat.vanilla_max_parts_index() {
+                    if cat_data_map[cat.category_name()]
+                        .rstbl_entries
+                        .iter()
+                        .any(|entry| entry.parts_index == idx)
+                        || cat_data_map[cat.category_name()]
+                            .pack_parts
+                            .contains_key(&idx)
+                    {
                         custom_order_indices.push((cat.category_name().to_string(), idx));
                         has_custom_content = true;
                     }
@@ -118,9 +125,7 @@ impl CustomModNamespace {
         let icon_pack_path = Path::new("romfs/Tex/Pack/MiiEditorIcon.bntx.zs");
         if mod_dir.join(icon_pack_path).exists() {
             let bytes = read_and_decompress(mod_dir, "romfs/Tex/Pack/MiiEditorIcon.bntx.zs")?;
-            if let Ok(bntx) = Bntx::parse(&bytes) {
-                custom_icon = Some(bntx);
-            }
+            custom_icon = Some(Bntx::parse(&bytes)?);
         }
 
         for entry in walkdir::WalkDir::new(mod_dir)
@@ -138,19 +143,27 @@ impl CustomModNamespace {
             if normal_path.starts_with("Model/") && normal_path.ends_with(".bfres") {
                 if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
                     let clean_stem = stem.strip_suffix(".bfres").unwrap_or(stem);
-                    let num_str: String =
-                        clean_stem.chars().filter(|c| c.is_ascii_digit()).collect();
+                    let is_owned = categories.iter().any(|cat| {
+                        let data = &cat_data_map[cat.category_name()];
 
-                    if let Ok(parts_idx) = num_str.parse::<i32>() {
-                        let is_modded = categories
+                        data.rstbl_entries
                             .iter()
-                            .any(|cat| parts_idx > cat.vanilla_max_parts_index());
-                        if is_modded {
-                            let raw_bytes = read_and_decompress(mod_dir, rel_str)?;
-                            let bfres = bfres_parse(&raw_bytes)?;
-                            models.insert(clean_stem.to_string(), bfres);
-                            has_custom_content = true;
-                        }
+                            .map(|e| e.parts_index)
+                            .chain(data.pack_parts.keys().copied())
+                            .any(|index| {
+                                let name = cat.internal_model_name(index as u32);
+                                clean_stem == name
+                                    || clean_stem
+                                        .strip_prefix(&name)
+                                        .is_some_and(|suffix| suffix.starts_with('_'))
+                            })
+                    });
+
+                    if is_owned {
+                        let raw_bytes = read_and_decompress(mod_dir, rel_str)?;
+                        let bfres = bfres_parse(&raw_bytes)?;
+                        models.insert(clean_stem.to_string(), bfres);
+                        has_custom_content = true;
                     }
                 }
             }

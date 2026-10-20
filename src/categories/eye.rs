@@ -99,6 +99,8 @@ impl CategoryDef for EyeDef {
             entry.texture_name = Some(self.part_name(index));
         }
 
+        entry.is_ltdmerge_gen = true;
+
         entry
     }
 
