@@ -384,11 +384,12 @@ fn is_bfres(path: &str) -> bool {
 }
 
 fn row_id_of(val: &Value) -> &str {
-    if let Value::Dict(m) = val {
-        if let Some(Value::String(s)) = m.get("__RowId") {
-            return s.as_str();
-        }
+    if let Value::Dict(m) = val
+        && let Some(Value::String(s)) = m.get("__RowId")
+    {
+        return s.as_str();
     }
+
     ""
 }
 
@@ -396,17 +397,17 @@ fn collect_category_indices(doc: &Byml, target_hash: u32) -> Result<Vec<u32>> {
     byml_root_array(doc)?
         .iter()
         .filter_map(|entry| {
-            if let Value::Dict(m) = entry {
-                if let Some(Value::U32(parts_type)) = m.get("PartsType") {
-                    if *parts_type == target_hash {
-                        match m.get("PartsIndex") {
-                            Some(Value::I32(idx)) if *idx >= 0 => return Some(Ok(*idx as u32)),
-                            Some(Value::U32(idx)) => return Some(Ok(*idx)),
-                            _ => {}
-                        }
-                    }
+            if let Value::Dict(m) = entry
+                && let Some(Value::U32(parts_type)) = m.get("PartsType")
+                && *parts_type == target_hash
+            {
+                match m.get("PartsIndex") {
+                    Some(Value::I32(idx)) if *idx >= 0 => return Some(Ok(*idx as u32)),
+                    Some(Value::U32(idx)) => return Some(Ok(*idx)),
+                    _ => {}
                 }
             }
+
             None
         })
         .collect()

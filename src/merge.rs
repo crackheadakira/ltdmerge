@@ -467,10 +467,11 @@ fn merge_named<T: PartialEq>(
         return;
     }
 
-    if let Some(previous) = dest.get(&name) {
-        if previous != &value && baseline.get(&name) != Some(previous) {
-            eprintln!("warning: {kind} {name}: last input wins");
-        }
+    if let Some(previous) = dest.get(&name)
+        && previous != &value
+        && baseline.get(&name) != Some(previous)
+    {
+        eprintln!("warning: {kind} {name}: last input wins");
     }
 
     dest.insert(name, value);
@@ -602,10 +603,10 @@ fn validate_output(
                         }
                     }
 
-                    if let Some(name) = entry.texture_name.as_ref().filter(|s| !s.is_empty()) {
-                        if let Some(names) = &texture_names {
-                            anyhow::ensure!(names.contains(name), "missing parts texture {name}");
-                        }
+                    if let Some(name) = entry.texture_name.as_ref().filter(|s| !s.is_empty())
+                        && let Some(names) = &texture_names
+                    {
+                        anyhow::ensure!(names.contains(name), "missing parts texture {name}");
                     }
 
                     if base.is_some() && data.pack_parts.contains_key(&entry.parts_index) {

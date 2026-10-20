@@ -140,31 +140,32 @@ impl CustomModNamespace {
             let clean = clean_name(rel_str);
             let normal_path = clean.strip_prefix("romfs/").unwrap_or(clean);
 
-            if normal_path.starts_with("Model/") && normal_path.ends_with(".bfres") {
-                if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
-                    let clean_stem = stem.strip_suffix(".bfres").unwrap_or(stem);
-                    let is_owned = categories.iter().any(|cat| {
-                        let data = &cat_data_map[cat.category_name()];
+            if normal_path.starts_with("Model/")
+                && normal_path.ends_with(".bfres")
+                && let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str())
+            {
+                let clean_stem = stem.strip_suffix(".bfres").unwrap_or(stem);
+                let is_owned = categories.iter().any(|cat| {
+                    let data = &cat_data_map[cat.category_name()];
 
-                        data.rstbl_entries
-                            .iter()
-                            .map(|e| e.parts_index)
-                            .chain(data.pack_parts.keys().copied())
-                            .any(|index| {
-                                let name = cat.internal_model_name(index as u32);
-                                clean_stem == name
-                                    || clean_stem
-                                        .strip_prefix(&name)
-                                        .is_some_and(|suffix| suffix.starts_with('_'))
-                            })
-                    });
+                    data.rstbl_entries
+                        .iter()
+                        .map(|e| e.parts_index)
+                        .chain(data.pack_parts.keys().copied())
+                        .any(|index| {
+                            let name = cat.internal_model_name(index as u32);
+                            clean_stem == name
+                                || clean_stem
+                                    .strip_prefix(&name)
+                                    .is_some_and(|suffix| suffix.starts_with('_'))
+                        })
+                });
 
-                    if is_owned {
-                        let raw_bytes = read_and_decompress(mod_dir, rel_str)?;
-                        let bfres = bfres_parse(&raw_bytes)?;
-                        models.insert(clean_stem.to_string(), bfres);
-                        has_custom_content = true;
-                    }
+                if is_owned {
+                    let raw_bytes = read_and_decompress(mod_dir, rel_str)?;
+                    let bfres = bfres_parse(&raw_bytes)?;
+                    models.insert(clean_stem.to_string(), bfres);
+                    has_custom_content = true;
                 }
             }
         }

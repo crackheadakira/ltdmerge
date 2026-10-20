@@ -350,10 +350,10 @@ fn overlay_changes(target: &mut Value, before: &Value, after: &Value) {
 
 pub fn murmur32(s: &str) -> u32 {
     let mut hash = 0u32;
-    let mut chunks = s.as_bytes().chunks_exact(4);
+    let (chunks, remainder) = s.as_bytes().as_chunks::<4>();
 
-    for chunk in &mut chunks {
-        let k = u32::from_le_bytes(chunk.try_into().unwrap())
+    for chunk in chunks {
+        let k = u32::from_le_bytes(*chunk)
             .wrapping_mul(0xcc9e2d51)
             .rotate_left(15)
             .wrapping_mul(0x1b873593);
@@ -365,11 +365,12 @@ pub fn murmur32(s: &str) -> u32 {
     }
 
     let mut tail = 0u32;
-    for (i, b) in chunks.remainder().iter().enumerate() {
+
+    for (i, b) in remainder.iter().enumerate() {
         tail |= u32::from(*b) << (8 * i);
     }
 
-    if !chunks.remainder().is_empty() {
+    if !remainder.is_empty() {
         hash ^= tail
             .wrapping_mul(0xcc9e2d51)
             .rotate_left(15)

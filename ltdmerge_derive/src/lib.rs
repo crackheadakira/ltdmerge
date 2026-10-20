@@ -113,7 +113,7 @@ fn impl_to_byml(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 .unwrap_or_else(|| to_pascal_case(&field_name.to_string()));
 
             let key = if attrs.hash {
-                let hash_val = murmurhash3_32(raw_key.as_bytes(), 0);
+                let hash_val = murmur32(&raw_key);
                 format!("{:08x}", hash_val)
             } else {
                 raw_key
@@ -416,50 +416,37 @@ fn to_pascal_case(s: &str) -> String {
         .collect()
 }
 
-fn murmurhash3_32(key: &[u8], seed: u32) -> u32 {
-    let mut hash = seed;
-    let chunks = key.chunks_exact(4);
-    let remainder = chunks.remainder();
-
-    const C1: u32 = 0xcc9e2d51;
-    const C2: u32 = 0x1b873593;
+fn murmur32(s: &str) -> u32 {
+    let mut hash = 0u32;
+    let (chunks, remainder) = s.as_bytes().as_chunks::<4>();
 
     for chunk in chunks {
-        let mut k = u32::from_le_bytes(chunk.try_into().unwrap());
+        let k = u32::from_le_bytes(*chunk)
+            .wrapping_mul(0xcc9e2d51)
+            .rotate_left(15)
+            .wrapping_mul(0x1b873593);
 
-        k = k.wrapping_mul(C1);
-        k = k.rotate_left(15);
-        k = k.wrapping_mul(C2);
-
-        hash ^= k;
-        hash = hash.rotate_left(13);
-        hash = hash.wrapping_mul(5).wrapping_add(0xe6546b64);
+        hash = (hash ^ k)
+            .rotate_left(13)
+            .wrapping_mul(5)
+            .wrapping_add(0xe6546b64);
     }
 
-    let mut k1: u32 = 0;
+    let mut tail = 0u32;
+
+    for (i, b) in remainder.iter().enumerate() {
+        tail |= u32::from(*b) << (8 * i);
+    }
+
     if !remainder.is_empty() {
-        if remainder.len() >= 3 {
-            k1 ^= (remainder[2] as u32) << 16;
-        }
-        if remainder.len() >= 2 {
-            k1 ^= (remainder[1] as u32) << 8;
-        }
-        if remainder.len() >= 1 {
-            k1 ^= remainder[0] as u32;
-        }
-
-        k1 = k1.wrapping_mul(C1);
-        k1 = k1.rotate_left(15);
-        k1 = k1.wrapping_mul(C2);
-        hash ^= k1;
+        hash ^= tail
+            .wrapping_mul(0xcc9e2d51)
+            .rotate_left(15)
+            .wrapping_mul(0x1b873593);
     }
 
-    hash ^= key.len() as u32;
-    hash ^= hash >> 16;
-    hash = hash.wrapping_mul(0x85ebca6b);
-    hash ^= hash >> 13;
-    hash = hash.wrapping_mul(0xc2b2ae35);
-    hash ^= hash >> 16;
-
-    hash
+    hash ^= s.len() as u32;
+    hash = (hash ^ (hash >> 16)).wrapping_mul(0x85ebca6b);
+    hash = (hash ^ (hash >> 13)).wrapping_mul(0xc2b2ae35);
+    hash ^ (hash >> 16)
 }

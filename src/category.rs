@@ -633,7 +633,7 @@ impl PartsModelUnitParam {
             let internal_mesh_name = model_bfres
                 .models
                 .names
-                .get(0)
+                .first()
                 .context("The provided BFRES file contains no internal meshes.")?
                 .clone();
 
