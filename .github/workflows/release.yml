@@ -43,10 +43,10 @@ jobs:
               run: |
                   FORCE="${{ github.event.inputs.force }}"
 
-                  NEW_VER=$(grep -m1 '^version = ' ltdmerge/Cargo.toml | cut -d '"' -f2)
+                  NEW_VER=$(grep -m1 '^version = ' src/Cargo.toml | cut -d '"' -f2)
 
                   if git rev-parse HEAD~1 >/dev/null 2>&1; then
-                    OLD_VER=$(git show HEAD~1:ltdmerge/Cargo.toml | grep -m1 '^version = ' | cut -d '"' -f2 || echo "0.0.0")
+                    OLD_VER=$(git show HEAD~1:src/Cargo.toml | grep -m1 '^version = ' | cut -d '"' -f2 || echo "0.0.0")
                   else
                     OLD_VER="0.0.0"
                   fi
