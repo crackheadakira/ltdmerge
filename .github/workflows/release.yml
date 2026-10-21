@@ -1,0 +1,147 @@
+name: Build & Publish Releases
+
+on:
+    push:
+        branches:
+            - main
+
+    workflow_dispatch:
+        inputs:
+            force:
+                description: "Force rebuild and replace release assets"
+                required: false
+                default: false
+                type: boolean
+
+permissions:
+    contents: write
+
+jobs:
+    check-and-tag:
+        name: Check Versions & Auto-Tag
+        runs-on: ubuntu-latest
+
+        outputs:
+            cli_changed: ${{ steps.check-cli.outputs.changed }}
+            cli_tag: v${{ steps.check-cli.outputs.version }}-cli
+            any_changed: ${{ steps.global-check.outputs.any_changed }}
+
+        steps:
+            - name: Checkout Code
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 2
+
+            - name: Configure Git Bot
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
+
+            - name: Check ltdmerge Version
+              id: check-cli
+              shell: bash
+              run: |
+                  FORCE="${{ github.event.inputs.force }}"
+
+                  NEW_VER=$(grep -m1 '^version = ' ltdmerge/Cargo.toml | cut -d '"' -f2)
+
+                  if git rev-parse HEAD~1 >/dev/null 2>&1; then
+                    OLD_VER=$(git show HEAD~1:ltdmerge/Cargo.toml | grep -m1 '^version = ' | cut -d '"' -f2 || echo "0.0.0")
+                  else
+                    OLD_VER="0.0.0"
+                  fi
+
+                  if [[ "$NEW_VER" != "$OLD_VER" || "$FORCE" == "true" ]]; then
+                    echo "changed=true" >> "$GITHUB_OUTPUT"
+                    echo "version=$NEW_VER" >> "$GITHUB_OUTPUT"
+
+                    TAG="v${NEW_VER}-cli"
+
+                    if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+                      git tag "$TAG"
+                      git push origin "$TAG"
+                    fi
+                  else
+                    echo "changed=false" >> "$GITHUB_OUTPUT"
+                  fi
+
+            - name: Evaluate Global Changes
+              id: global-check
+              shell: bash
+              run: |
+                  if [[ "${{ steps.check-cli.outputs.changed }}" == "true" == "true" ]]; then
+                    echo "any_changed=true" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "any_changed=false" >> "$GITHUB_OUTPUT"
+                  fi
+
+    build-release:
+        name: Build Assets for ${{ matrix.job.target }}
+        needs: check-and-tag
+
+        if: needs.check-and-tag.outputs.any_changed == 'true'
+
+        runs-on: ${{ matrix.job.os }}
+
+        strategy:
+            fail-fast: false
+            matrix:
+                job:
+                    - os: ubuntu-latest
+                      target: x86_64-unknown-linux-gnu
+                      bin-cli: ltdmerge
+
+                    - os: windows-latest
+                      target: x86_64-pc-windows-msvc
+                      bin-cli: ltdmerge.exe
+
+                    - os: macos-latest
+                      target: x86_64-apple-darwin
+                      bin-cli: ltdmerge
+
+        steps:
+            - name: Checkout Source Code
+              uses: actions/checkout@v4
+
+            - name: Install Rust Toolchain
+              uses: dtolnay/rust-toolchain@stable
+              with:
+                  targets: ${{ matrix.job.target }}
+
+            - name: Cargo Cache
+              uses: swatinem/rust-cache@v2
+              with:
+                  key: ${{ matrix.job.target }}
+
+            - name: Configure Clang (Windows)
+              if: matrix.job.os == 'windows-latest'
+              shell: pwsh
+              run: |
+                  echo "CXX=clang" >> $env:GITHUB_ENV
+                  echo "CC=clang" >> $env:GITHUB_ENV
+                  clang --version
+
+            - name: Build Workspace (Optimized Release)
+              run: cargo build --release --workspace --target ${{ matrix.job.target }}
+
+            - name: Package CLI (Windows)
+              if: matrix.job.os == 'windows-latest' && needs.check-and-tag.outputs.cli_changed == 'true'
+              shell: pwsh
+              run: |
+                  cd target/${{ matrix.job.target }}/release
+                  7z a ../../../ltdmerge-${{ needs.check-and-tag.outputs.cli_tag }}-${{ matrix.job.target }}.zip ${{ matrix.job.bin-cli }}
+
+            - name: Package CLI (Linux/macOS)
+              if: matrix.job.os != 'windows-latest' && needs.check-and-tag.outputs.cli_changed == 'true'
+              run: |
+                  cd target/${{ matrix.job.target }}/release
+                  tar -czf ../../../ltdmerge-${{ needs.check-and-tag.outputs.cli_tag }}-${{ matrix.job.target }}.tar.gz ${{ matrix.job.bin-cli }}
+
+            - name: Upload CLI Release
+              if: needs.check-and-tag.outputs.cli_changed == 'true'
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ needs.check-and-tag.outputs.cli_tag }}
+                  overwrite_files: true
+                  files: |
+                      ltdmerge-*.zip
