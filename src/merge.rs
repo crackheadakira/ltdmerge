@@ -190,7 +190,10 @@ pub fn run_with_base(
     }
 
     for cat in &engine.categories {
-        let order_path = cat.path_parts_order();
+        let Some(order_path) = cat.path_parts_order() else {
+            continue;
+        };
+
         let rel = format!("romfs/{order_path}");
         let mut template = None;
         let mut order = Vec::new();
@@ -691,10 +694,14 @@ fn validate_output(
                         }
                     }
 
-                    if let Some(name) = entry.texture_name.as_ref().filter(|s| !s.is_empty())
-                        && let Some(names) = &texture_names
+                    for name in [&entry.texture_name, &entry.no_lip_texture_name]
+                        .into_iter()
+                        .flatten()
+                        .filter(|s| !s.is_empty())
                     {
-                        anyhow::ensure!(names.contains(name), "missing parts texture {name}");
+                        if let Some(names) = &texture_names {
+                            anyhow::ensure!(names.contains(name), "missing parts texture {name}");
+                        }
                     }
 
                     for table in cat.linked_tables() {

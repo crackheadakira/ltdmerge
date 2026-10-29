@@ -13,31 +13,46 @@ pub struct CategorySpec {
     pub model: &'static str,
     pub template: &'static str,
     pub vanilla_max: i32,
-    pub icon_match: &'static str,
-    pub fallback_icon: &'static str,
     pub mask_icon: bool,
-    pub order: &'static str,
+    pub order: Option<&'static str>,
     pub linked: &'static [LinkedTable],
-    pub defaults: fn(&mut PartsEntry),
 }
 
 impl CategorySpec {
-    const fn new(name: &'static str, width: usize, kind: AssetKind) -> Self {
+    const fn texture(name: &'static str, width: usize, template: &'static str, max: i32) -> Self {
         Self {
             name,
             category: name,
             stem: name,
             width,
-            kind,
+            kind: AssetKind::Texture,
             model: "",
-            template: "",
-            vanilla_max: 0,
-            icon_match: "",
-            fallback_icon: "",
+            template,
+            vanilla_max: max,
             mask_icon: false,
-            order: name,
+            order: Some(name),
             linked: &[],
-            defaults: |_| {},
+        }
+    }
+
+    const fn model(
+        name: &'static str,
+        width: usize,
+        model: &'static str,
+        template: &'static str,
+        max: i32,
+    ) -> Self {
+        Self {
+            kind: AssetKind::Model,
+            model,
+            ..Self::texture(name, width, template, max)
+        }
+    }
+
+    const fn unordered(self) -> Self {
+        Self {
+            order: None,
+            ..self
         }
     }
 
@@ -48,61 +63,37 @@ impl CategorySpec {
 
 pub const ALL: &[CategorySpec] = &[
     CategorySpec {
-        template: "Eye000",
-        vanilla_max: 80,
-        icon_match: "MiiEditor_Face_Eye",
-        fallback_icon: "MiiEditor_Face_Eye001_Uit",
         mask_icon: true,
         linked: &[EYE_ACCESSORY],
-        defaults: |entry| {
-            entry.axis_for_expression.x = 0.38;
-            entry.axis_for_expression.y = 0.01;
-        },
-        ..CategorySpec::new("Eye", 3, AssetKind::Texture)
+        ..CategorySpec::texture("Eye", 3, "Eye000", 80)
     },
+    CategorySpec::texture("Eyebrow", 2, "Eyebrow00", 42),
+    CategorySpec::texture("EyelashUpper", 2, "EyelashUpper00", 5).unordered(),
+    CategorySpec::texture("EyelashLower", 2, "EyelashLower00", 1).unordered(),
+    CategorySpec::texture("EyelidUpper", 2, "EyelidUpper00", 2).unordered(),
+    CategorySpec::texture("EyelidLower", 2, "EyelidLower00", 2).unordered(),
+    CategorySpec::texture("Highlight", 2, "Highlight00", 9),
     CategorySpec {
-        model: "MiiEar",
-        vanilla_max: 4,
-        icon_match: "MiiEditor_Face_Ear",
-        fallback_icon: "MiiEditor_Face_Ear00_Uit",
-        ..CategorySpec::new("Ear", 2, AssetKind::Model)
-    },
-    CategorySpec {
-        model: "MiiHead",
-        vanilla_max: 21,
-        icon_match: "MiiEditor_Face_Faceline",
-        fallback_icon: "MiiEditor_Face_Faceline15_Uit",
         mask_icon: true,
-        defaults: |entry| {
-            entry.is_flippable = false;
-            entry.is_use_hair_parts_model = false;
-            if entry.default_scale == 0 {
-                entry.default_scale = 2;
-            }
-        },
-        ..CategorySpec::new("Faceline", 2, AssetKind::Model)
+        ..CategorySpec::texture("Mouth", 3, "Mouth002", 55)
+    },
+    CategorySpec::texture("Mustache", 2, "Mustache00", 15),
+    CategorySpec::texture("BeardShort", 2, "BeardShort00", 14),
+    CategorySpec::texture("MakeUpper", 2, "MakeUpper00", 3).unordered(),
+    CategorySpec::texture("MakeLower", 2, "MakeLower00", 9),
+    CategorySpec::texture("WrinkleUpper", 2, "WrinkleUpper00", 8),
+    CategorySpec::texture("WrinkleLower", 2, "WrinkleLower00", 14),
+    CategorySpec::texture("Mole", 2, "Mole00", 1).unordered(),
+    CategorySpec::model("Ear", 2, "MiiEar", "Ear00", 4),
+    CategorySpec {
+        mask_icon: true,
+        ..CategorySpec::model("Faceline", 2, "MiiHead", "Faceline00", 21)
     },
     CategorySpec {
         category: "Hair",
-        model: "MiiHairBack",
-        vanilla_max: 340,
-        icon_match: "MiiEditor_Face_HairBack",
-        fallback_icon: "MiiEditor_Face_HairBack001_Uit",
-        defaults: |entry| {
-            entry.is_attachable_hair_front = true;
-            entry.is_attachable_hair_parts_upper = true;
-            entry.is_attachable_hair_parts_middle = true;
-            entry.is_attachable_hair_parts_lower = true;
-        },
-        ..CategorySpec::new("HairBack", 3, AssetKind::Model)
+        ..CategorySpec::model("HairBack", 3, "MiiHairBack", "HairBack006", 340)
     },
-    CategorySpec {
-        model: "MiiHairFront",
-        vanilla_max: 82,
-        icon_match: "MiiEditor_Face_HairFront",
-        fallback_icon: "MiiEditor_Face_HairFront001_Uit",
-        ..CategorySpec::new("HairFront", 3, AssetKind::Model)
-    },
+    CategorySpec::model("HairFront", 3, "MiiHairFront", "HairFront000", 82),
 ];
 
 impl CategoryDef for CategorySpec {
@@ -130,6 +121,10 @@ impl CategoryDef for CategorySpec {
         self.model
     }
 
+    fn template_part(&self) -> &str {
+        self.template
+    }
+
     fn part_name(&self, index: u32) -> String {
         self.numbered(self.stem, index)
     }
@@ -149,24 +144,13 @@ impl CategoryDef for CategorySpec {
         format!("Mii/Parts/{file_name}.mii__Parts.bgyml")
     }
 
-    fn vanilla_icon_fallback(&self) -> &str {
-        self.fallback_icon
-    }
-
-    fn path_parts_order(&self) -> String {
-        format!("Mii/PartsOrder/{}.mii__PartsOrder.bgyml", self.order)
-    }
-
-    fn template_texture(&self) -> Option<&str> {
-        (self.kind == AssetKind::Texture).then_some(self.template)
+    fn path_parts_order(&self) -> Option<String> {
+        self.order
+            .map(|order| format!("Mii/PartsOrder/{order}.mii__PartsOrder.bgyml"))
     }
 
     fn linked_tables(&self) -> &[LinkedTable] {
         self.linked
-    }
-
-    fn matches_icon_name(&self, tex_name: &str) -> bool {
-        tex_name.contains(self.icon_match)
     }
 
     fn editor_icon_name(&self, index: u32) -> String {
@@ -184,18 +168,12 @@ impl CategoryDef for CategorySpec {
         entry.category = self.category.to_string();
         entry.file_name = self.part_name(index);
         entry.row_id = self.row_id(index);
-
         entry.is_visible_in_editor = true;
-        entry.is_selectable_color = true;
-        entry.max_trans_x = 18;
-        entry.min_trans_y = 0;
-        entry.max_trans_y = 31;
 
         if self.kind == AssetKind::Texture && entry.texture_name.is_none() {
             entry.texture_name = Some(self.part_name(index));
         }
 
-        (self.defaults)(&mut entry);
         entry.is_ltdmerge_gen = true;
         entry
     }

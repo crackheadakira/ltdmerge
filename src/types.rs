@@ -100,7 +100,11 @@ impl CustomModNamespace {
         }
 
         for cat in categories {
-            let order_path = Path::new("romfs").join(cat.path_parts_order());
+            let Some(order_path) = cat.path_parts_order() else {
+                continue;
+            };
+
+            let order_path = Path::new("romfs").join(order_path);
 
             if mod_dir.join(&order_path).exists() {
                 let bytes = read_and_decompress(mod_dir, order_path.to_str().unwrap())?;

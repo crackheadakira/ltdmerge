@@ -153,6 +153,9 @@ pub struct PartsEntry {
 
     #[byml(skip)]
     pub eye_accessory: Option<EyeAccessoryParam>,
+
+    #[byml(skip)]
+    pub template: Option<String>,
 }
 
 impl Default for PartsEntry {
@@ -210,17 +213,55 @@ impl Default for PartsEntry {
             hair_parts_attach_info: Vec::new(),
             is_ltdmerge_gen: false,
             eye_accessory: None,
+            template: None,
         }
     }
 }
 
+const TEMPLATE_LAYOUT_FIELDS: &[&str] = &[
+    "AxisForExpression",
+    "SizeForExpression",
+    "OffsetRotate",
+    "RotateAxis",
+    "DefaultScale",
+    "DefaultAspect",
+    "DefaultTransX",
+    "DefaultTransY",
+    "MaxTransX",
+    "MinTransY",
+    "MaxTransY",
+    "IsFlippable",
+    "IsSelectableColor",
+    "IsSelectableSubColor",
+    "UseTextureColor",
+    "IsMouthOpen",
+    "IsEnableMouthLipDefault",
+    "IsUseHairPartsModel",
+    "IsAttachableHairFront",
+    "IsAttachableHairPartsUpper",
+    "IsAttachableHairPartsMiddle",
+    "IsAttachableHairPartsLower",
+];
+
 impl PartsEntry {
-    pub fn with_category_defaults(self, index: u32, cat: &dyn CategoryDef) -> Result<Self> {
+    pub fn with_category_defaults(
+        self,
+        index: u32,
+        cat: &dyn CategoryDef,
+        template: &BTreeMap<String, Value>,
+    ) -> Result<Self> {
         let original = self.to_byml_full_map();
         let origin = self.origin.clone();
         let eye_accessory = self.eye_accessory.clone();
+        let template_name = self.template.clone();
         let mut entry = cat.apply_category_defaults(index, self);
         let mut values = entry.to_byml_full_map();
+
+        for key in TEMPLATE_LAYOUT_FIELDS {
+            if let Some(value) = template.get(*key) {
+                values.insert((*key).into(), value.clone());
+            }
+        }
 
         for key in &origin.manifest_fields {
             if [
@@ -249,6 +290,7 @@ impl PartsEntry {
         entry = Self::decode(&Value::Dict(values))?;
         entry.origin = origin;
         entry.eye_accessory = eye_accessory;
+        entry.template = template_name;
         entry.sync_component_hashes();
 
         Ok(entry)
@@ -328,8 +370,8 @@ impl PartsEntry {
             self.texture_name = Some(new_model_token.into());
         }
 
-        if self.no_lip_texture_name.as_deref() == Some(old_model_token) {
-            self.no_lip_texture_name = Some(new_model_token.into());
+        if self.no_lip_texture_name.as_deref() == Some(&format!("{old_model_token}_NoLip")) {
+            self.no_lip_texture_name = Some(format!("{new_model_token}_NoLip"));
         }
 
         self.parts_index = new_index;
@@ -712,21 +754,16 @@ pub trait CategoryDef: Send + Sync {
     fn model_folder(&self) -> &str;
     fn part_name(&self, index: u32) -> String;
     fn row_id(&self, index: u32) -> String;
-    fn vanilla_icon_fallback(&self) -> &str;
-    fn matches_icon_name(&self, tex_name: &str) -> bool;
+    fn template_part(&self) -> &str;
     fn editor_icon_name(&self, index: u32) -> String;
 
     fn editor_mask_icon_name(&self, _index: u32) -> Option<String> {
         None
     }
 
-    fn path_parts_order(&self) -> String;
+    fn path_parts_order(&self) -> Option<String>;
     fn pack_path(&self, file_name: &str) -> String;
     fn internal_model_name(&self, index: u32) -> String;
-
-    fn template_texture(&self) -> Option<&str> {
-        None
-    }
 
     fn linked_tables(&self) -> &[LinkedTable] {
         &[]

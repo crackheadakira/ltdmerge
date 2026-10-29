@@ -1,4 +1,4 @@
-use crate::category::{AssetKind, CategoryDef, PartsEntry};
+use crate::category::{AssetKind, CategoryDef, PartsEntry, str_field};
 use crate::manifest::AddManifest;
 use crate::registry::CategoryRegistry;
 use crate::rstbl::alloc_size;
@@ -16,7 +16,7 @@ pub struct MutableState<'a> {
     pub rstbl_doc: &'a mut Byml,
     pub pack_entries: &'a mut IndexMap<String, Vec<u8>>,
     pub rsizetable: &'a mut Rstbl,
-    pub order_doc: &'a mut Byml,
+    pub order_doc: Option<&'a mut Byml>,
     pub base_bntx: Option<&'a mut Bntx>,
     pub editor_bntx: &'a mut Bntx,
     pub linked: &'a mut BTreeMap<&'static str, Byml>,
@@ -63,34 +63,36 @@ pub fn mutate_asset_structures(
             "Manifest entry is missing both a model_unit.fmdb and a texture_name source path",
         )?;
 
-    if let Some(ref local_png_path) = entry.editor_icon_name {
-        let final_game_icon_token = cat.editor_icon_name(next_index);
-        inject_bntx_icon(
-            Path::new(local_png_path),
-            &final_game_icon_token,
-            cat,
-            state.editor_bntx,
-        )?;
+    let template_name = entry
+        .template
+        .clone()
+        .unwrap_or_else(|| cat.template_part().to_string());
 
-        entry.editor_icon_name = Some(final_game_icon_token);
+    let template = template_row(state.rstbl_doc, cat, &template_name)?;
+    let template_icon = str_field(&template, "EditorIconName");
+    let template_mask = Some(str_field(&template, "EditorMaskIconName"))
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| template_icon.clone());
+
+    if let Some(ref local_png_path) = entry.editor_icon_name {
+        let icon = cat.editor_icon_name(next_index);
+        println!("Injecting editor icon: '{icon}'");
+        inject_texture(state.editor_bntx, local_png_path, &icon, &template_icon)?;
+        entry.editor_icon_name = Some(icon);
     } else {
-        entry.editor_icon_name = Some(cat.vanilla_icon_fallback().to_string());
+        entry.editor_icon_name = Some(template_icon.clone());
     }
 
     if let Some(ref local_png_path) = entry.editor_mask_icon_name
-        && let Some(final_game_icon_token) = cat.editor_mask_icon_name(next_index)
+        && let Some(mask) = cat.editor_mask_icon_name(next_index)
     {
-        inject_bntx_icon(
-            Path::new(local_png_path),
-            &final_game_icon_token,
-            cat,
-            state.editor_bntx,
-        )?;
-
-        entry.editor_mask_icon_name = Some(final_game_icon_token);
+        println!("Injecting editor mask icon: '{mask}'");
+        inject_texture(state.editor_bntx, local_png_path, &mask, &template_mask)?;
+        entry.editor_mask_icon_name = Some(mask);
     }
 
-    entry = entry.with_category_defaults(next_index, cat)?;
+    let no_lip_png = entry.no_lip_texture_name.clone();
+    entry = entry.with_category_defaults(next_index, cat, &template)?;
 
     let mut romfs_files = BTreeMap::new();
     if is_bfres(&primary) {
@@ -126,42 +128,31 @@ pub fn mutate_asset_structures(
             written_sizes.insert(format!("romfs/{rel_path}"), size);
         }
     } else {
-        if let Some(bntx_archive) = &mut state.base_bntx {
-            println!("Injecting raw asset texture into MiiParts.bntx: '{target_internal_token}'");
-
-            let png_bytes = std::fs::read(&primary).with_context(|| {
-                format!("failed to read texture asset source file: {}", primary)
-            })?;
-
-            let img = image::png_to_rgba(&png_bytes)?;
-
-            let template_name = cat.template_texture().unwrap_or_default();
-            let template_tex = bntx_archive
-                .textures
-                .iter()
-                .find(|tex| tex.name == template_name)
-                .with_context(|| {
-                    format!(
-                        "MiiParts.bntx template match failed for category '{}'",
-                        cat.category_name()
-                    )
-                })?
-                .clone();
-
-            bntx_archive.textures.push(Texture {
-                name: target_internal_token.clone(),
-                info: template_tex.info.clone(),
-                mip_offsets: template_tex.mip_offsets.clone(),
-                user_data: vec![],
-                image_data: encode_mips_swizzled(&img, &template_tex)?,
-            });
-
-            entry.texture_name = Some(target_internal_token.clone());
-        } else {
+        let Some(parts_bntx) = &mut state.base_bntx else {
             bail!(
                 "Category '{}' received a non-BFRES asset but does not support direct BNTX texture injection.",
                 cat.category_name()
             );
+        };
+
+        let template_texture = str_field(&template, "TextureName");
+        println!("Injecting raw asset texture into MiiParts.bntx: '{target_internal_token}'");
+
+        inject_texture(
+            parts_bntx,
+            &primary,
+            &target_internal_token,
+            &template_texture,
+        )?;
+
+        entry.texture_name = Some(target_internal_token.clone());
+
+        if let Some(png) = no_lip_png {
+            let no_lip = format!("{target_internal_token}_NoLip");
+            println!("Injecting no-lip texture into MiiParts.bntx: '{no_lip}'");
+            inject_texture(parts_bntx, &png, &no_lip, &template_texture)?;
+
+            entry.no_lip_texture_name = Some(no_lip);
         }
     }
 
@@ -189,8 +180,8 @@ pub fn mutate_asset_structures(
         .pack_entries
         .insert(cat.pack_path(&part_filename), inner_bytes);
 
-    {
-        let order_arr = match byml_root_dict_mut(state.order_doc)?.get_mut("Order") {
+    if let Some(order_doc) = state.order_doc.as_deref_mut() {
+        let order_arr = match byml_root_dict_mut(order_doc)?.get_mut("Order") {
             Some(Value::Array(a)) => a,
             _ => bail!("PartsOrder missing 'Order' Array"),
         };
@@ -262,13 +253,13 @@ pub fn add_multi(
         );
 
         let order_path = cat.path_parts_order();
-
-        if !open_orders.contains_key(&order_path) {
-            let order_bytes = read_and_decompress(base, &order_path)?;
-            open_orders.insert(order_path.clone(), byml_parse(&order_bytes)?);
+        if let Some(path) = &order_path
+            && !open_orders.contains_key(path)
+        {
+            open_orders.insert(path.clone(), byml_parse(&read_and_decompress(base, path)?)?);
         }
 
-        let order_doc = open_orders.get_mut(&order_path).unwrap();
+        let order_doc = order_path.and_then(|path| open_orders.get_mut(&path));
 
         let mut state = MutableState {
             rstbl_doc: &mut rstbl_doc,
@@ -362,40 +353,51 @@ fn collect_category_indices(doc: &Byml, target_hash: u32) -> Result<Vec<u32>> {
         .collect()
 }
 
-fn inject_bntx_icon(
-    icon_png: &Path,
-    texture_name: &str,
+fn template_row(
+    doc: &Byml,
     cat: &dyn CategoryDef,
-    bntx: &mut Bntx,
-) -> Result<()> {
-    println!("Injecting editor icon: '{texture_name}'");
-    let png_bytes = std::fs::read(icon_png)
-        .with_context(|| format!("reading icon '{}'", icon_png.display()))?;
-    let img = image::png_to_rgba(&png_bytes)?;
+    template: &str,
+) -> Result<BTreeMap<String, Value>> {
+    let row_id = format!("Work/Mii/Parts/{template}.mii__Parts.gyml");
 
-    bntx.textures.retain(|t| t.name != texture_name);
+    let row = byml_root_array(doc)?
+        .iter()
+        .find_map(|row| match row {
+            Value::Dict(map) if row_id_of(row) == row_id => Some(map.clone()),
+            _ => None,
+        })
+        .with_context(|| format!("template part '{template}' is not in the base MiiParts table"))?;
+
+    anyhow::ensure!(
+        str_field(&row, "Category") == cat.internal_category_name(),
+        "template part '{template}' is not a {} part",
+        cat.category_name()
+    );
+
+    Ok(row)
+}
+
+fn inject_texture(bntx: &mut Bntx, png: &str, name: &str, template: &str) -> Result<()> {
+    let png_bytes = std::fs::read(png).with_context(|| format!("reading PNG '{png}'"))?;
+    let img = image::png_to_rgba(&png_bytes)?;
 
     let template = bntx
         .textures
         .iter()
-        .find(|tex| cat.matches_icon_name(&tex.name))
-        .with_context(|| {
-            format!(
-                "MiiEditorIcon.bntx has no vanilla textures matching category '{}'",
-                cat.internal_category_name()
-            )
-        })?
+        .find(|tex| tex.name == template)
+        .with_context(|| format!("no template texture '{template}' for '{name}'"))?
         .clone();
 
-    println!("Layout icon template: '{}'", template.name);
+    let image_data = encode_mips_swizzled(&img, &template)
+        .with_context(|| format!("encoding '{png}' like '{}'", template.name))?;
 
-    let swizzled_data = encode_mips_swizzled(&img, &template)?;
+    bntx.textures.retain(|t| t.name != name);
     bntx.textures.push(Texture {
-        name: texture_name.to_string(),
+        name: name.to_string(),
         info: template.info,
         mip_offsets: template.mip_offsets,
         user_data: vec![],
-        image_data: swizzled_data,
+        image_data,
     });
 
     Ok(())
