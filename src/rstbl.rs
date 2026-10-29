@@ -216,10 +216,6 @@ impl AsbResourceCalculator {
 struct BymlResourceCalculator;
 impl BymlResourceCalculator {
     fn calculate_offset(filename_lower: &str) -> i64 {
-        if filename_lower.contains("rstbl") {
-            return 288 + 0x6A9E0;
-        }
-
         if filename_lower.contains("esetb.byml") {
             return 288 + 0x220;
         }

@@ -1,4 +1,5 @@
 use crate::category::{AssetKind, CategoryDef, PartsEntry};
+use crate::linked::{EYE_ACCESSORY, LinkedTable};
 use crate::typed_param::murmur32;
 use schemars::Schema;
 
@@ -16,6 +17,7 @@ pub struct CategorySpec {
     pub fallback_icon: &'static str,
     pub mask_icon: bool,
     pub order: &'static str,
+    pub linked: &'static [LinkedTable],
     pub defaults: fn(&mut PartsEntry),
 }
 
@@ -34,6 +36,7 @@ impl CategorySpec {
             fallback_icon: "",
             mask_icon: false,
             order: name,
+            linked: &[],
             defaults: |_| {},
         }
     }
@@ -50,11 +53,8 @@ pub const ALL: &[CategorySpec] = &[
         icon_match: "MiiEditor_Face_Eye",
         fallback_icon: "MiiEditor_Face_Eye001_Uit",
         mask_icon: true,
+        linked: &[EYE_ACCESSORY],
         defaults: |entry| {
-            entry.components.insert(
-                "EyeAccessoryRef".into(),
-                "Work/Mii/EyeAccessoryParam/Eye000.mii__EyeAccessoryParam.gyml".into(),
-            );
             entry.axis_for_expression.x = 0.38;
             entry.axis_for_expression.y = 0.01;
         },
@@ -159,6 +159,10 @@ impl CategoryDef for CategorySpec {
 
     fn template_texture(&self) -> Option<&str> {
         (self.kind == AssetKind::Texture).then_some(self.template)
+    }
+
+    fn linked_tables(&self) -> &[LinkedTable] {
+        self.linked
     }
 
     fn matches_icon_name(&self, tex_name: &str) -> bool {

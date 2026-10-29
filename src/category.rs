@@ -1,3 +1,4 @@
+use crate::linked::{EyeAccessoryParam, LinkedTable};
 use crate::typed_param::{self, BymlDecode, BymlOrigin};
 use anyhow::{Context, Result};
 use ltdmerge_derive::{FromByml, ToByml};
@@ -149,6 +150,9 @@ pub struct PartsEntry {
 
     #[byml(default = false)]
     pub is_ltdmerge_gen: bool,
+
+    #[byml(skip)]
+    pub eye_accessory: Option<EyeAccessoryParam>,
 }
 
 impl Default for PartsEntry {
@@ -205,6 +209,7 @@ impl Default for PartsEntry {
             hair_parts_model_unit_for_hat: BTreeMap::new(),
             hair_parts_attach_info: Vec::new(),
             is_ltdmerge_gen: false,
+            eye_accessory: None,
         }
     }
 }
@@ -213,6 +218,7 @@ impl PartsEntry {
     pub fn with_category_defaults(self, index: u32, cat: &dyn CategoryDef) -> Result<Self> {
         let original = self.to_byml_full_map();
         let origin = self.origin.clone();
+        let eye_accessory = self.eye_accessory.clone();
         let mut entry = cat.apply_category_defaults(index, self);
         let mut values = entry.to_byml_full_map();
 
@@ -242,6 +248,7 @@ impl PartsEntry {
 
         entry = Self::decode(&Value::Dict(values))?;
         entry.origin = origin;
+        entry.eye_accessory = eye_accessory;
         entry.sync_component_hashes();
 
         Ok(entry)
@@ -326,8 +333,12 @@ impl PartsEntry {
         }
 
         self.parts_index = new_index;
-        self.file_name = new_file_name;
+        let old_file_name = std::mem::replace(&mut self.file_name, new_file_name);
         self.row_id = new_row_id;
+
+        for table in cat.linked_tables() {
+            table.retarget(self, &old_file_name);
+        }
 
         self.flush_to_raw(old_model_token, new_model_token, cat);
     }
@@ -609,6 +620,16 @@ pub struct Vector2f {
     pub y: f32,
 }
 
+#[derive(Debug, Clone, ToByml, FromByml, Deserialize, JsonSchema, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Vector2i {
+    #[byml(default = 0)]
+    pub x: i32,
+
+    #[byml(default = 0)]
+    pub y: i32,
+}
+
 #[derive(Debug, Clone, ToByml, FromByml, Deserialize, JsonSchema, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct PartsModelUnitParam {
@@ -705,6 +726,10 @@ pub trait CategoryDef: Send + Sync {
 
     fn template_texture(&self) -> Option<&str> {
         None
+    }
+
+    fn linked_tables(&self) -> &[LinkedTable] {
+        &[]
     }
 
     fn build_rstbl_value(&self, entry: &PartsEntry) -> Value {

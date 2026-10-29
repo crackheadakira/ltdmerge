@@ -19,6 +19,7 @@ pub struct MutableState<'a> {
     pub order_doc: &'a mut Byml,
     pub base_bntx: Option<&'a mut Bntx>,
     pub editor_bntx: &'a mut Bntx,
+    pub linked: &'a mut BTreeMap<&'static str, Byml>,
 }
 
 pub fn run(
@@ -164,6 +165,15 @@ pub fn mutate_asset_structures(
         }
     }
 
+    for table in cat.linked_tables() {
+        let doc = state
+            .linked
+            .get_mut(table.table)
+            .context("linked table was not loaded")?;
+
+        table.insert(doc, &mut entry)?;
+    }
+
     entry.validate()?;
     let root_array = byml_root_array_mut(state.rstbl_doc)?;
     root_array.push(entry.build_rstbl_value());
@@ -226,6 +236,22 @@ pub fn add_multi(
         None
     };
 
+    let mut linked = BTreeMap::new();
+
+    for cat in assets
+        .iter()
+        .filter_map(|spec| registry.get(&spec.category))
+    {
+        for table in cat.linked_tables() {
+            if !linked.contains_key(table.table) {
+                linked.insert(
+                    table.table,
+                    byml_parse(&read_and_decompress(base, table.table)?)?,
+                );
+            }
+        }
+    }
+
     for (i, spec) in assets.iter().enumerate() {
         let cat = registry.get(&spec.category).expect("pre-verified");
         println!(
@@ -251,6 +277,7 @@ pub fn add_multi(
             order_doc,
             base_bntx: base_bntx.as_mut(),
             editor_bntx: &mut editor_bntx,
+            linked: &mut linked,
         };
 
         let local_sizes = mutate_asset_structures(spec.clone(), out, cat, &mut state)?;
@@ -263,6 +290,12 @@ pub fn add_multi(
             clean_name("romfs/Tex/Pack/MiiParts.bntx").to_string(),
             bntx_size,
         );
+    }
+
+    for (path, doc) in &linked {
+        let size = compress_and_write(out, path, &byml_to_bytes(doc)?)?;
+
+        patch_rstbl(&mut rsizetable, path, size)?;
     }
 
     let icon_size = compress_and_write(out, PATH_MII_EDITOR_ICON, &editor_bntx.write()?)?;

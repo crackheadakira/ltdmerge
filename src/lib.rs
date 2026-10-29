@@ -1,5 +1,6 @@
 pub mod categories;
 pub mod category;
+pub mod linked;
 pub mod manifest;
 pub mod registry;
 

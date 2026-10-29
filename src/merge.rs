@@ -1,5 +1,6 @@
 use crate::category::{CategoryDef, i32_field};
 use crate::engine::{MiiMergeEngine, rename_resource};
+use crate::linked::{self, LinkedTable};
 use crate::types::CustomModNamespace;
 use crate::util::*;
 use anyhow::{Context, Result, bail};
@@ -87,6 +88,8 @@ pub fn run_with_base(
 
     engine.reserve_indices(reserved);
     engine.compute_allocations()?;
+    let owned = owned_linked_rows(&engine);
+
     engine.execute_remap()?;
 
     let mut outputs: BTreeMap<String, Vec<u8>> = BTreeMap::new();
@@ -248,6 +251,55 @@ pub fn run_with_base(
             );
 
             outputs.insert(order_path, byml_to_bytes(&doc)?);
+        }
+    }
+
+    let mut tables: Vec<LinkedTable> = Vec::new();
+
+    for table in engine.categories.iter().flat_map(|c| c.linked_tables()) {
+        if !tables.iter().any(|t| t.table == table.table) {
+            tables.push(*table);
+        }
+    }
+
+    for table in tables {
+        let mut template = None;
+        let mut rows = BTreeMap::new();
+        let mut baseline = BTreeMap::new();
+
+        if let Some(base) = base.filter(|b| asset_exists(b, table.table)) {
+            let doc = byml_parse(&read_and_decompress(base, table.table)?)?;
+            baseline = linked::rows_by_id(&doc)?;
+            rows = baseline.clone();
+        }
+
+        for (id, dir) in mod_dirs.iter().enumerate() {
+            let rel = format!("romfs/{}", table.table);
+
+            if !asset_exists(dir, &rel) {
+                continue;
+            }
+
+            let doc = byml_parse(&read_and_decompress(dir, &rel)?)?;
+            for (row_id, mut row) in linked::rows_by_id(&doc)? {
+                if let Some(&new) = owned.get(&(id, table.table, row_id)) {
+                    linked::set_row_id(&mut row, new);
+                    anyhow::ensure!(
+                        rows.insert(new, row).is_none(),
+                        "remapped {} row collides: {new}",
+                        table.component
+                    );
+                } else {
+                    merge_named(&mut rows, row_id, row, &baseline, table.component);
+                }
+            }
+
+            template = Some(doc);
+        }
+
+        if let Some(mut doc) = template {
+            doc.root = Value::Array(rows.into_values().collect());
+            outputs.insert(table.table.into(), byml_to_bytes(&doc)?);
         }
     }
 
@@ -459,11 +511,11 @@ fn reserve_row(
     }
 }
 
-fn merge_named<T: PartialEq>(
-    dest: &mut BTreeMap<String, T>,
-    name: String,
+fn merge_named<K: Ord + std::fmt::Display, T: PartialEq>(
+    dest: &mut BTreeMap<K, T>,
+    name: K,
     value: T,
-    baseline: &BTreeMap<String, T>,
+    baseline: &BTreeMap<K, T>,
     kind: &str,
 ) {
     if baseline.get(&name) == Some(&value) && dest.contains_key(&name) {
@@ -478,6 +530,39 @@ fn merge_named<T: PartialEq>(
     }
 
     dest.insert(name, value);
+}
+
+fn owned_linked_rows(engine: &MiiMergeEngine) -> BTreeMap<(usize, &'static str, u32), u32> {
+    let mut owned = BTreeMap::new();
+
+    for m in &engine.mods {
+        for cat in &engine.categories {
+            let Some(data) = m.categories.get(cat.category_name()) else {
+                continue;
+            };
+
+            for entry in data.rstbl_entries.iter().chain(data.pack_parts.values()) {
+                let new = engine
+                    .allocation_map
+                    .get(&(cat.category_name().into(), m.mod_index, entry.parts_index))
+                    .copied()
+                    .unwrap_or(entry.parts_index);
+
+                for table in cat.linked_tables() {
+                    let old = table.row_id(&entry.file_name);
+
+                    if entry.components_hash.get(table.component) == Some(&old) {
+                        owned.insert(
+                            (m.mod_index, table.table, old),
+                            table.row_id(&cat.part_name(new as u32)),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    owned
 }
 
 fn owned_pack_remap<'a>(
@@ -610,6 +695,21 @@ fn validate_output(
                         && let Some(names) = &texture_names
                     {
                         anyhow::ensure!(names.contains(name), "missing parts texture {name}");
+                    }
+
+                    for table in cat.linked_tables() {
+                        let id = table.row_id(&entry.file_name);
+
+                        if entry.components_hash.get(table.component) == Some(&id)
+                            && let Some(bytes) = outputs.get(table.table)
+                        {
+                            anyhow::ensure!(
+                                linked::rows_by_id(&byml_parse(bytes)?)?.contains_key(&id),
+                                "missing {} row for {}",
+                                table.component,
+                                entry.file_name
+                            );
+                        }
                     }
 
                     if base.is_some() && data.pack_parts.contains_key(&entry.parts_index) {
