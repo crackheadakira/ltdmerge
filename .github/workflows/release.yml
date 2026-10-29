@@ -113,14 +113,6 @@ jobs:
               with:
                   key: ${{ matrix.job.target }}
 
-            - name: Configure Clang (Windows)
-              if: matrix.job.os == 'windows-latest'
-              shell: pwsh
-              run: |
-                  echo "CXX=clang" >> $env:GITHUB_ENV
-                  echo "CC=clang" >> $env:GITHUB_ENV
-                  clang --version
-
             - name: Build Workspace (Optimized Release)
               run: cargo build --release --workspace --target ${{ matrix.job.target }}
 

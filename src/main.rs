@@ -3,7 +3,6 @@ use clap::{Parser, Subcommand};
 use std::io::Read;
 use std::path::PathBuf;
 
-use ltdmerge::categories::{EarDef, EyeDef, FacelineDef, HairBackDef, HairFrontDef};
 use ltdmerge::manifest::AddManifest;
 use ltdmerge::registry::CategoryRegistry;
 
@@ -54,22 +53,12 @@ enum Command {
     },
 }
 
-fn build_registry() -> CategoryRegistry {
-    let mut registry = CategoryRegistry::new();
-    registry.register(FacelineDef);
-    registry.register(HairFrontDef);
-    registry.register(EyeDef);
-    registry.register(EarDef);
-    registry.register(HairBackDef);
-    registry
-}
-
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
         Command::Merge { mods, out, base } => {
-            let registry = build_registry();
+            let registry = CategoryRegistry::builtin();
             let categories = registry.into_all();
 
             merge::run_with_base(mods, out, categories, base.as_deref())
@@ -90,7 +79,7 @@ fn main() -> Result<()> {
                 bail!("manifest contains no assets");
             }
 
-            let registry = build_registry();
+            let registry = CategoryRegistry::builtin();
 
             for spec in &manifest.assets {
                 if registry.get(&spec.category).is_none() {

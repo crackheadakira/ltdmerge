@@ -1,4 +1,4 @@
-use crate::category::{CategoryDef, PartsEntry};
+use crate::category::{AssetKind, CategoryDef, PartsEntry};
 use crate::manifest::AddManifest;
 use crate::registry::CategoryRegistry;
 use crate::rstbl::alloc_size;
@@ -27,26 +27,11 @@ pub fn run(
     manifest: &AddManifest,
     registry: &CategoryRegistry,
 ) -> Result<()> {
-    let out = out_root.join("romfs");
-
     if manifest.assets.is_empty() {
         return Ok(());
     }
 
-    if manifest.assets.len() > 1 {
-        add_multi(base, &out, &manifest.assets, registry)?;
-    } else {
-        let entry = &manifest.assets[0];
-        let cat = registry
-            .get(&entry.category)
-            .expect("category name was pre-validated in main");
-
-        println!("[1/1] Adding '{}' asset", entry.category);
-        add_single(base, &out, entry, cat)
-            .with_context(|| format!("category '{}'", entry.category))?;
-    }
-
-    Ok(())
+    add_multi(base, &out_root.join("romfs"), &manifest.assets, registry)
 }
 
 pub fn mutate_asset_structures(
@@ -110,13 +95,19 @@ pub fn mutate_asset_structures(
     if is_bfres(&primary) {
         entry.model_unit.compile_and_finalize(
             &target_internal_token,
+            cat.model_folder(),
             &target_internal_token,
             &mut romfs_files,
         )?;
 
         if let Some(ref mut hat_unit) = entry.model_unit_for_hat {
             let hat_token = format!("{}_Hat", target_internal_token);
-            hat_unit.compile_and_finalize(&hat_token, &target_internal_token, &mut romfs_files)?;
+            hat_unit.compile_and_finalize(
+                &hat_token,
+                cat.model_folder(),
+                &target_internal_token,
+                &mut romfs_files,
+            )?;
         }
 
         for (lookup_key, raw_bytes) in romfs_files {
@@ -143,10 +134,11 @@ pub fn mutate_asset_structures(
 
             let img = image::png_to_rgba(&png_bytes)?;
 
+            let template_name = cat.template_texture().unwrap_or_default();
             let template_tex = bntx_archive
                 .textures
                 .iter()
-                .find(|tex| cat.matches_texture_name(&tex.name))
+                .find(|tex| tex.name == template_name)
                 .with_context(|| {
                     format!(
                         "MiiParts.bntx template match failed for category '{}'",
@@ -199,85 +191,6 @@ pub fn mutate_asset_structures(
     Ok(written_sizes)
 }
 
-fn add_single(base: &Path, out: &Path, spec: &PartsEntry, cat: &dyn CategoryDef) -> Result<()> {
-    let rstbl_bytes = read_and_decompress(base, PATH_RSTBL_BYML)?;
-    let mut rstbl_doc = byml_parse(&rstbl_bytes)?;
-
-    let pack_bytes = read_and_decompress(base, PATH_MII_PARTS_PACK)?;
-    let pack_sarc = sarc_parse(pack_bytes)?;
-    let mut pack_entries = sarc_entries_owned(&pack_sarc);
-
-    let order_bytes = read_and_decompress(base, cat.path_parts_order())?;
-    let mut order_doc = byml_parse(&order_bytes)?;
-
-    let rsizetable_bytes = read_and_decompress(base, PATH_RSIZETABLE)?;
-    let mut rsizetable = Rstbl::parse(&rsizetable_bytes)?;
-
-    let icon_bytes = read_and_decompress(base, PATH_MII_EDITOR_ICON)?;
-    let mut editor_bntx = Bntx::parse(&icon_bytes)?;
-
-    let is_texture_asset =
-        ["eye", "beard", "mouth"].contains(&spec.category.to_lowercase().as_str());
-
-    let mut base_bntx = if is_texture_asset {
-        let raw_bntx_bytes = read_and_decompress(base, "Tex/Pack/MiiParts.bntx.zs")?;
-
-        Some(Bntx::parse(&raw_bntx_bytes)?)
-    } else {
-        None
-    };
-
-    let mut written_sizes = {
-        let mut state = MutableState {
-            rstbl_doc: &mut rstbl_doc,
-            pack_entries: &mut pack_entries,
-            rsizetable: &mut rsizetable,
-            order_doc: &mut order_doc,
-            base_bntx: base_bntx.as_mut(),
-            editor_bntx: &mut editor_bntx,
-        };
-
-        mutate_asset_structures(spec.clone(), out, cat, &mut state)?
-    };
-
-    if let Some(base_bntx) = base_bntx {
-        let bntx_size = compress_and_write(out, "Tex/Pack/MiiParts.bntx.zs", &base_bntx.write()?)?;
-
-        written_sizes.insert(
-            clean_name("romfs/Tex/Pack/MiiParts.bntx").to_string(),
-            bntx_size,
-        );
-    }
-
-    let icon_size = compress_and_write(out, PATH_MII_EDITOR_ICON, &editor_bntx.write()?)?;
-    patch_rstbl(&mut rsizetable, PATH_MII_EDITOR_ICON, icon_size)?;
-
-    let mii_pack_size = compress_and_write(
-        out,
-        PATH_MII_PARTS_PACK,
-        &sarc_pack(&pack_entries, &pack_sarc)?,
-    )?;
-
-    let rstbl_size = compress_and_write(out, PATH_RSTBL_BYML, &byml_to_bytes(&rstbl_doc)?)?;
-    let parts_order_size =
-        compress_and_write(out, cat.path_parts_order(), &byml_to_bytes(&order_doc)?)?;
-
-    patch_rstbl(&mut rsizetable, PATH_RSTBL_BYML, rstbl_size)?;
-    patch_rstbl(&mut rsizetable, cat.path_parts_order(), parts_order_size)?;
-    patch_rstbl(&mut rsizetable, PATH_MII_PARTS_PACK, mii_pack_size)?;
-
-    for (clean_path, decompressed_size) in &written_sizes {
-        patch_rstbl(&mut rsizetable, clean_path, *decompressed_size)?;
-    }
-
-    let mut rsizetable_buf = Vec::new();
-    rsizetable.write(&mut rsizetable_buf)?;
-    compress_and_write(out, PATH_RSIZETABLE, &rsizetable_buf)?;
-
-    println!("Done.");
-    Ok(())
-}
-
 pub fn add_multi(
     base: &Path,
     out: &Path,
@@ -302,7 +215,8 @@ pub fn add_multi(
 
     let batch_has_textures = assets
         .iter()
-        .any(|spec| ["eye", "beard", "mouth"].contains(&spec.category.to_lowercase().as_str()));
+        .filter_map(|spec| registry.get(&spec.category))
+        .any(|cat| cat.asset_kind() == AssetKind::Texture);
 
     let mut base_bntx = if batch_has_textures {
         let parts_bntx_rel = "Tex/Pack/MiiParts.bntx.zs";
@@ -321,11 +235,13 @@ pub fn add_multi(
             spec.category
         );
 
-        let order_path = cat.path_parts_order().to_string();
+        let order_path = cat.path_parts_order();
+
         if !open_orders.contains_key(&order_path) {
             let order_bytes = read_and_decompress(base, &order_path)?;
             open_orders.insert(order_path.clone(), byml_parse(&order_bytes)?);
         }
+
         let order_doc = open_orders.get_mut(&order_path).unwrap();
 
         let mut state = MutableState {

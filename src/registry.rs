@@ -1,6 +1,7 @@
 use crate::category::CategoryDef;
 use std::collections::HashMap;
 
+#[derive(Default)]
 pub struct CategoryRegistry {
     entries: HashMap<String, Box<dyn CategoryDef>>,
 }
@@ -10,6 +11,16 @@ impl CategoryRegistry {
         Self {
             entries: HashMap::new(),
         }
+    }
+
+    pub fn builtin() -> Self {
+        let mut registry = Self::new();
+
+        for spec in crate::categories::ALL {
+            registry.register(*spec);
+        }
+
+        registry
     }
 
     pub fn register(&mut self, cat: impl CategoryDef + 'static) {

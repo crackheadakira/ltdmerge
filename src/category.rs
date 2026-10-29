@@ -623,6 +623,7 @@ impl PartsModelUnitParam {
     pub fn compile_and_finalize(
         &mut self,
         target_token: &str,
+        model_folder: &str,
         folder_name: &str,
         romfs_files: &mut BTreeMap<String, Vec<u8>>,
     ) -> Result<()> {
@@ -643,7 +644,7 @@ impl PartsModelUnitParam {
             romfs_files.insert(format!("Model/{target_token}.bfres"), serialized);
 
             self.fmdb = Some(format!(
-                "Work/Model/Mii/MiiHead/{folder_name}/output/{internal_mesh_name}.fmdb"
+                "Work/Model/Mii/{model_folder}/{folder_name}/output/{internal_mesh_name}.fmdb"
             ));
         }
 
@@ -670,6 +671,13 @@ pub struct ComponentInfo {
     pub confluence_page_info: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetKind {
+    Texture,
+    Model,
+    HairParts,
+}
+
 pub trait CategoryDef: Send + Sync {
     fn category_name(&self) -> &str;
 
@@ -679,6 +687,8 @@ pub trait CategoryDef: Send + Sync {
 
     fn parts_type_hash(&self) -> u32;
     fn vanilla_max_parts_index(&self) -> i32;
+    fn asset_kind(&self) -> AssetKind;
+    fn model_folder(&self) -> &str;
     fn part_name(&self, index: u32) -> String;
     fn row_id(&self, index: u32) -> String;
     fn vanilla_icon_fallback(&self) -> &str;
@@ -689,20 +699,12 @@ pub trait CategoryDef: Send + Sync {
         None
     }
 
-    fn path_parts_order(&self) -> &str;
+    fn path_parts_order(&self) -> String;
     fn pack_path(&self, file_name: &str) -> String;
     fn internal_model_name(&self, index: u32) -> String;
 
-    fn matches_texture_name(&self, _tex_name: &str) -> bool {
-        false
-    }
-
-    fn extra_index_fields(&self, _index: u32) -> Vec<(&'static str, String)> {
-        vec![]
-    }
-
-    fn extra_remappable_string_keys(&self) -> &[&'static str] {
-        &[]
+    fn template_texture(&self) -> Option<&str> {
+        None
     }
 
     fn build_rstbl_value(&self, entry: &PartsEntry) -> Value {

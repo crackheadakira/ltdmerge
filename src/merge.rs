@@ -187,12 +187,13 @@ pub fn run_with_base(
     }
 
     for cat in &engine.categories {
-        let rel = format!("romfs/{}", cat.path_parts_order());
+        let order_path = cat.path_parts_order();
+        let rel = format!("romfs/{order_path}");
         let mut template = None;
         let mut order = Vec::new();
 
-        if let Some(base) = base.filter(|b| asset_exists(b, cat.path_parts_order())) {
-            let bytes = read_and_decompress(base, cat.path_parts_order())?;
+        if let Some(base) = base.filter(|b| asset_exists(b, &order_path)) {
+            let bytes = read_and_decompress(base, &order_path)?;
             order = parse_parts_order_array(&bytes)?;
             template = Some(byml_parse(&bytes)?);
         }
@@ -240,11 +241,13 @@ pub fn run_with_base(
         if let Some(mut doc) = template {
             let mut seen = BTreeSet::new();
             order.retain(|i| seen.insert(*i));
+
             byml_root_dict_mut(&mut doc)?.insert(
                 "Order".into(),
                 Value::Array(order.into_iter().map(|i| Value::U32(i as u32)).collect()),
             );
-            outputs.insert(cat.path_parts_order().into(), byml_to_bytes(&doc)?);
+
+            outputs.insert(order_path, byml_to_bytes(&doc)?);
         }
     }
 
