@@ -1,6 +1,9 @@
 use crate::category::{
-    AssetKind, CategoryDef, HairPartType, OrderEncoding, PartsEntry, PartsModelUnitParam,
-    attach_icon_name, i32_field, str_field,
+    AssetKind, CategoryDef, OrderEncoding, PartsEntry, PartsModelUnitParam, attach_icon_name,
+    i32_field, str_field,
+};
+use crate::inspect::{
+    ATTACH_ICON_TEMPLATE, BaseAssets, UnitSlot, part_row, resolve_models, template_row,
 };
 use crate::manifest::AddManifest;
 use crate::registry::CategoryRegistry;
@@ -36,6 +39,13 @@ pub fn run(
         return Ok(());
     }
 
+    let problems = BaseAssets::load(base)?.check(&manifest.assets, registry);
+
+    if !problems.is_empty() {
+        let list: Vec<String> = problems.iter().map(|p| format!("  {p}")).collect();
+        bail!("the manifest has problems:\n{}", list.join("\n"));
+    }
+
     add_multi(base, &out_root.join("romfs"), &manifest.assets, registry)
 }
 
@@ -56,7 +66,10 @@ pub fn mutate_asset_structures(
 
     let part_filename = cat.part_name(next_index);
     let target_internal_token = cat.internal_model_name(next_index);
-    println!("Assigning index {next_index} -> '{part_filename}'");
+
+    crate::log::info(&format!(
+        "Assigning index {next_index} -> '{part_filename}'"
+    ));
 
     if let Some(id) = &entry.id {
         anyhow::ensure!(
@@ -90,7 +103,7 @@ pub fn mutate_asset_structures(
 
     if let Some(ref local_png_path) = entry.editor_icon_name {
         let icon = cat.editor_icon_name(next_index);
-        println!("Injecting editor icon: '{icon}'");
+        crate::log::info(&format!("Injecting editor icon: '{icon}'"));
         inject_texture(state.editor_bntx, local_png_path, &icon, &template_icon)?;
         entry.editor_icon_name = Some(icon);
     } else {
@@ -100,7 +113,7 @@ pub fn mutate_asset_structures(
     if let Some(ref local_png_path) = entry.editor_mask_icon_name
         && let Some(mask) = cat.editor_mask_icon_name(next_index)
     {
-        println!("Injecting editor mask icon: '{mask}'");
+        crate::log::info(&format!("Injecting editor mask icon: '{mask}'"));
         inject_texture(state.editor_bntx, local_png_path, &mask, &template_mask)?;
         entry.editor_mask_icon_name = Some(mask);
     }
@@ -114,7 +127,9 @@ pub fn mutate_asset_structures(
         };
 
         let template_texture = str_field(&template, "TextureName");
-        println!("Injecting raw asset texture into MiiParts.bntx: '{target_internal_token}'");
+        crate::log::info(&format!(
+            "Injecting raw asset texture into MiiParts.bntx: '{target_internal_token}'"
+        ));
         inject_texture(
             parts_bntx,
             &primary,
@@ -125,7 +140,9 @@ pub fn mutate_asset_structures(
 
         if let Some(png) = no_lip_png {
             let no_lip = format!("{target_internal_token}_NoLip");
-            println!("Injecting no-lip texture into MiiParts.bntx: '{no_lip}'");
+            crate::log::info(&format!(
+                "Injecting no-lip texture into MiiParts.bntx: '{no_lip}'"
+            ));
             inject_texture(parts_bntx, &png, &no_lip, &template_texture)?;
             entry.no_lip_texture_name = Some(no_lip);
         }
@@ -214,135 +231,55 @@ fn compile_models(
     token: &str,
 ) -> Result<Vec<(String, Vec<u8>)>> {
     let mut bfres = bfres_parse(&read_and_decompress(Path::new(""), source)?)?;
-    let names = bfres.models.names.clone();
-    anyhow::ensure!(!names.is_empty(), "'{source}' contains no models");
-
-    let fmdb = |model: &str| {
-        format!(
-            "Work/Model/Mii/{}/{token}/output/{model}.fmdb",
-            cat.model_folder()
-        )
-    };
-
-    let pick = |unit: Option<&PartsModelUnitParam>,
-                auto: &dyn Fn(&str) -> bool|
-     -> Result<Option<String>> {
-        match unit.and_then(|u| u.fmdb.as_deref()) {
-            Some(name) => {
-                anyhow::ensure!(
-                    names.iter().any(|n| n == name),
-                    "'{source}' has no model '{name}' (models: {})",
-                    names.join(", ")
-                );
-                Ok(Some(name.to_string()))
-            }
-            None => Ok(names.iter().find(|n| auto(n)).cloned()),
-        }
-    };
+    let units = resolve_models(entry, cat, &bfres.models.names)
+        .with_context(|| format!("resolving models in '{source}'"))?;
 
     let mut files = Vec::new();
     let mut cloth: BTreeMap<String, String> = BTreeMap::new();
-    let mut cloth_path = |phcl: Option<&str>, suffix: &str| -> Result<Option<String>> {
-        let Some(phcl) = phcl.filter(|p| !p.is_empty()) else {
-            return Ok(None);
+
+    entry.model_unit = PartsModelUnitParam::default();
+    entry.model_unit_for_hat = None;
+    entry.flipped_model_unit = None;
+    entry.flipped_model_unit_for_hat = None;
+    entry.hair_parts_model_unit.clear();
+
+    for unit in units {
+        let phcl = match unit.phcl.as_deref().filter(|p| !p.is_empty()) {
+            None => None,
+            Some(phcl) if phcl.starts_with("Work/") => Some(phcl.to_string()),
+            Some(phcl) => Some(match cloth.get(phcl) {
+                Some(path) => path.clone(),
+                None => {
+                    let name = format!("{token}{}", unit.cloth_suffix);
+                    let bytes =
+                        std::fs::read(phcl).with_context(|| format!("reading cloth '{phcl}'"))?;
+                    files.push((format!("Phive/Cloth/{name}.Nin_NX_NVN.bphcl"), bytes));
+
+                    let path = format!("Work/Phive/Cloth/{name}.phcl");
+                    cloth.insert(phcl.to_string(), path.clone());
+                    path
+                }
+            }),
         };
 
-        if phcl.starts_with("Work/") {
-            return Ok(Some(phcl.to_string()));
-        }
-
-        if let Some(path) = cloth.get(phcl) {
-            return Ok(Some(path.clone()));
-        }
-
-        let name = format!("{token}{suffix}");
-        let bytes = std::fs::read(phcl).with_context(|| format!("reading cloth '{phcl}'"))?;
-        files.push((format!("Phive/Cloth/{name}.Nin_NX_NVN.bphcl"), bytes));
-
-        let path = format!("Work/Phive/Cloth/{name}.phcl");
-        cloth.insert(phcl.to_string(), path.clone());
-        Ok(Some(path))
-    };
-
-    if cat.asset_kind() == AssetKind::HairParts {
-        let requested = std::mem::take(&mut entry.hair_parts_model_unit);
-        let slots: Vec<HairPartType> = if requested.is_empty() {
-            HairPartType::KNOWN.to_vec()
-        } else {
-            requested.keys().copied().collect()
+        let built = PartsModelUnitParam {
+            fmdb: Some(format!(
+                "Work/Model/Mii/{}/{token}/output/{}.fmdb",
+                cat.model_folder(),
+                unit.model
+            )),
+            phcl,
         };
 
-        for slot in slots {
-            let suffix = format!("_{}", slot.file_suffix());
-            let unit = requested.get(&slot);
-            let Some(model) = pick(unit, &|n| n.ends_with(&suffix))? else {
-                anyhow::ensure!(unit.is_none(), "'{source}' has no model for slot {slot:?}");
-                continue;
-            };
-
-            let phcl = cloth_path(unit.and_then(|u| u.phcl.as_deref()), &suffix)?;
-            entry.hair_parts_model_unit.insert(
-                slot,
-                PartsModelUnitParam {
-                    fmdb: Some(fmdb(&model)),
-                    phcl,
-                },
-            );
+        match unit.slot {
+            UnitSlot::Main => entry.model_unit = built,
+            UnitSlot::Hat => entry.model_unit_for_hat = Some(built),
+            UnitSlot::Flip => entry.flipped_model_unit = Some(built),
+            UnitSlot::FlipHat => entry.flipped_model_unit_for_hat = Some(built),
+            UnitSlot::HairPart(slot) => {
+                entry.hair_parts_model_unit.insert(slot, built);
+            }
         }
-
-        anyhow::ensure!(
-            !entry.hair_parts_model_unit.is_empty(),
-            "'{source}' has no models named after a hair part slot (e.g. *_UpperLeft)"
-        );
-
-        entry.model_unit = PartsModelUnitParam::default();
-    } else {
-        let is_hat = |n: &str| n.contains("Hat");
-        let is_flip = |n: &str| n.ends_with("_Flip");
-
-        let hat = pick(entry.model_unit_for_hat.as_ref(), &|n| {
-            is_hat(n) && !is_flip(n)
-        })?;
-        let flip = pick(entry.flipped_model_unit.as_ref(), &|n| {
-            is_flip(n) && !is_hat(n)
-        })?;
-        let flip_hat = pick(entry.flipped_model_unit_for_hat.as_ref(), &|n| {
-            is_hat(n) && is_flip(n)
-        })?;
-        let others = [&hat, &flip, &flip_hat];
-        let main = names
-            .iter()
-            .find(|n| !others.iter().any(|o| o.as_deref() == Some(n.as_str())))
-            .context("no model left for the main model unit")?
-            .clone();
-
-        let given = [
-            Some(entry.model_unit.clone()),
-            entry.model_unit_for_hat.clone(),
-            entry.flipped_model_unit.clone(),
-            entry.flipped_model_unit_for_hat.clone(),
-        ];
-
-        let mut built = Vec::new();
-        for ((model, given), suffix) in [Some(main), hat, flip, flip_hat]
-            .into_iter()
-            .zip(given)
-            .zip(["", "_Hat", "_Flip", "_HatFlip"])
-        {
-            built.push(match model {
-                Some(model) => Some(PartsModelUnitParam {
-                    fmdb: Some(fmdb(&model)),
-                    phcl: cloth_path(given.and_then(|u| u.phcl).as_deref(), suffix)?,
-                }),
-                None => None,
-            });
-        }
-
-        let [main, hat, flip, flip_hat] = <[_; 4]>::try_from(built).unwrap();
-        entry.model_unit = main.unwrap_or_default();
-        entry.model_unit_for_hat = hat;
-        entry.flipped_model_unit = flip;
-        entry.flipped_model_unit_for_hat = flip_hat;
     }
 
     bfres.name = token.to_string();
@@ -383,7 +320,7 @@ pub fn add_multi(
         .any(|cat| cat.asset_kind() == AssetKind::Texture);
 
     let mut base_bntx = if batch_has_textures {
-        let parts_bntx_rel = "Tex/Pack/MiiParts.bntx.zs";
+        let parts_bntx_rel = PATH_MII_PARTS_BNTX;
         let raw_bntx_bytes = read_and_decompress(base, parts_bntx_rel)?;
         Some(Bntx::parse(&raw_bntx_bytes)?)
     } else {
@@ -427,12 +364,12 @@ pub fn add_multi(
 
     for (i, spec) in queue.into_iter().enumerate() {
         let cat = registry.get(&spec.category).expect("pre-verified");
-        println!(
+        crate::log::info(&format!(
             "[{}/{}] Processing '{}' asset",
             i + 1,
             assets.len(),
             spec.category
-        );
+        ));
 
         let mut state = MutableState {
             rstbl_doc: &mut rstbl_doc,
@@ -450,7 +387,7 @@ pub fn add_multi(
     }
 
     if let Some(base_bntx) = base_bntx {
-        let bntx_size = compress_and_write(out, "Tex/Pack/MiiParts.bntx.zs", &base_bntx.write()?)?;
+        let bntx_size = compress_and_write(out, PATH_MII_PARTS_BNTX, &base_bntx.write()?)?;
         global_written_sizes.insert(
             clean_name("romfs/Tex/Pack/MiiParts.bntx").to_string(),
             bntx_size,
@@ -489,7 +426,7 @@ pub fn add_multi(
     rsizetable.write(&mut rsizetable_buf)?;
     compress_and_write(out, PATH_RSIZETABLE, &rsizetable_buf)?;
 
-    println!("All assets successfully merged and saved.");
+    crate::log::info("All assets successfully merged and saved.");
     Ok(())
 }
 
@@ -583,7 +520,7 @@ fn attach_hair_parts(entry: &mut PartsEntry, state: &mut MutableState) -> Result
                 *icon = fallback_icon.clone();
             } else if !icon.starts_with("MiiEditor_") {
                 let target = attach_icon_name(&entry.file_name, &name, letter);
-                println!("Injecting hair parts icon: '{target}'");
+                crate::log::info(&format!("Injecting hair parts icon: '{target}'"));
                 inject_texture(state.editor_bntx, icon, &target, ATTACH_ICON_TEMPLATE)?;
 
                 *icon = target;
@@ -601,34 +538,6 @@ fn attach_hair_parts(entry: &mut PartsEntry, state: &mut MutableState) -> Result
     entry.hair_parts_attach_info = infos;
 
     Ok(attached)
-}
-
-const ATTACH_ICON_TEMPLATE: &str = "MiiEditor_Face_HairBack000Parts000_C_Uit";
-
-fn part_row(doc: &Byml, file_name: &str) -> Result<Option<BTreeMap<String, Value>>> {
-    let row_id = format!("Work/Mii/Parts/{file_name}.mii__Parts.gyml");
-
-    Ok(byml_root_array(doc)?.iter().find_map(|row| match row {
-        Value::Dict(map) if row_id_of(row) == row_id => Some(map.clone()),
-        _ => None,
-    }))
-}
-
-fn template_row(
-    doc: &Byml,
-    cat: &dyn CategoryDef,
-    template: &str,
-) -> Result<BTreeMap<String, Value>> {
-    let row = part_row(doc, template)?
-        .with_context(|| format!("template part '{template}' is not in the base MiiParts table"))?;
-
-    anyhow::ensure!(
-        str_field(&row, "Category") == cat.internal_category_name(),
-        "template part '{template}' is not a {} part",
-        cat.category_name()
-    );
-
-    Ok(row)
 }
 
 fn inject_texture(bntx: &mut Bntx, png: &str, name: &str, template: &str) -> Result<()> {

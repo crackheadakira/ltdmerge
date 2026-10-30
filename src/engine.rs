@@ -117,9 +117,9 @@ impl MiiMergeEngine {
                     next = next
                         .checked_add(1)
                         .ok_or_else(|| anyhow::anyhow!("part index overflow"))?;
-                    println!(
+                    crate::log::info(&format!(
                         "[Collision] {name} | Mod {mod_id} Idx {old} reassigned to {assigned}"
-                    );
+                    ));
 
                     assigned
                 };

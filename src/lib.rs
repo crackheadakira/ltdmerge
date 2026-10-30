@@ -1,11 +1,13 @@
 pub mod categories;
 pub mod category;
 pub mod linked;
+pub mod log;
 pub mod manifest;
 pub mod registry;
 
 pub mod add;
 pub mod engine;
+pub mod inspect;
 pub mod merge;
 pub mod rstbl;
 pub mod typed_param;

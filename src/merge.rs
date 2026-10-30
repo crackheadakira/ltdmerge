@@ -327,10 +327,7 @@ pub fn run_with_base(
         }
     }
 
-    for (path, icons) in [
-        (PATH_MII_EDITOR_ICON, true),
-        ("Tex/Pack/MiiParts.bntx.zs", false),
-    ] {
+    for (path, icons) in [(PATH_MII_EDITOR_ICON, true), (PATH_MII_PARTS_BNTX, false)] {
         if let Some(bytes) = merge_textures(path, icons, &mod_dirs, base, &engine)? {
             outputs.insert(path.into(), bytes);
         }
@@ -390,7 +387,7 @@ pub fn run_with_base(
             }
 
             if copied.get(&key).is_some_and(|old| old != &bytes) {
-                eprintln!("warning: resource {key}: last input wins");
+                crate::log::warn(&format!("resource {key}: last input wins"));
             }
 
             copied.insert(key, bytes);
@@ -487,11 +484,11 @@ pub fn run_with_base(
         std::fs::write(&path, bytes).with_context(|| format!("writing {}", path.display()))?;
     }
 
-    println!(
+    crate::log::info(&format!(
         "Merged {} mods -> {}",
         mod_dirs.len(),
         destination.display()
-    );
+    ));
 
     Ok(())
 }
@@ -555,7 +552,7 @@ fn merge_named<K: Ord + std::fmt::Display, T: PartialEq>(
         && previous != &value
         && baseline.get(&name) != Some(previous)
     {
-        eprintln!("warning: {kind} {name}: last input wins");
+        crate::log::warn(&format!("{kind} {name}: last input wins"));
     }
 
     dest.insert(name, value);
@@ -682,7 +679,7 @@ fn validate_output(
         .transpose()?;
 
     let texture_names = outputs
-        .get("Tex/Pack/MiiParts.bntx.zs")
+        .get(PATH_MII_PARTS_BNTX)
         .map(|b| {
             Bntx::parse(b).map(|b| {
                 b.textures

@@ -8,6 +8,7 @@ pub const PATH_RSTBL_BYML: &str = "RSDB/MiiParts.Product.100.rstbl.byml.zs";
 pub const PATH_RSIZETABLE: &str =
     "System/Resource/ResourceSizeTable.Product.100.Nin_NX_NVN.rsizetable.zs";
 pub const PATH_MII_EDITOR_ICON: &str = "Tex/Pack/MiiEditorIcon.bntx.zs";
+pub const PATH_MII_PARTS_BNTX: &str = "Tex/Pack/MiiParts.bntx.zs";
 
 /// Returns true if a romfs path is zstd-compressed (i.e. ends with .zs).
 pub fn is_zs(path: &str) -> bool {
@@ -78,7 +79,7 @@ pub fn compress_and_write(out: &std::path::Path, rel: &str, bytes: &[u8]) -> Res
     }
 
     std::fs::write(&dest, &data).with_context(|| format!("writing {}", dest.display()))?;
-    println!("wrote {rel}");
+    crate::log::info(&format!("wrote {rel}"));
     Ok(bytes.len())
 }
 
@@ -144,7 +145,7 @@ pub fn sarc_entries_owned(arc: &sarc::Sarc) -> indexmap::IndexMap<String, Vec<u8
             Some(n) => {
                 map.insert(n.clone(), arc.data(entry).to_vec());
             }
-            None => eprintln!("warning: SARC entry has no name, skipping"),
+            None => crate::log::warn("SARC entry has no name, skipping"),
         }
     }
     map

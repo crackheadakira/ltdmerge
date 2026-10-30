@@ -3,7 +3,7 @@ use crate::typed_param::{self, murmur32};
 use crate::util::byml_root_array_mut;
 use anyhow::{Context, Result, bail};
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use tomolib::formats::byml::{Byml, Value};
 
@@ -130,19 +130,30 @@ pub fn set_row_id(row: &mut Value, id: u32) {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct EyeAccessoryParam {
     pub template: Option<String>,
+
+    #[serde(skip_serializing_if = "EyeAccessoryPart::is_empty")]
     pub eyelash_upper: EyeAccessoryPart,
+
+    #[serde(skip_serializing_if = "EyeAccessoryPart::is_empty")]
     pub eyelash_lower: EyeAccessoryPart,
+
+    #[serde(skip_serializing_if = "EyeAccessoryPart::is_empty")]
     pub eyelid_upper: EyeAccessoryPart,
+
+    #[serde(skip_serializing_if = "EyeAccessoryPart::is_empty")]
     pub eyelid_lower: EyeAccessoryPart,
+
+    #[serde(skip_serializing_if = "EyeAccessoryPart::is_empty")]
     pub highlight: EyeAccessoryPart,
+
     pub eyeline_default_enable: Option<bool>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct EyeAccessoryPart {
     pub default_parts_index: Option<i32>,
@@ -150,6 +161,16 @@ pub struct EyeAccessoryPart {
     pub rotate: Option<i32>,
     pub scale: Option<i32>,
     pub aspect: Option<i32>,
+}
+
+impl EyeAccessoryPart {
+    fn is_empty(&self) -> bool {
+        self.default_parts_index.is_none()
+            && self.pos.is_none()
+            && self.rotate.is_none()
+            && self.scale.is_none()
+            && self.aspect.is_none()
+    }
 }
 
 impl EyeAccessoryParam {

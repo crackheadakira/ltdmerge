@@ -3,11 +3,11 @@ use crate::typed_param::{self, BymlDecode, BymlOrigin};
 use anyhow::Result;
 use ltdmerge_derive::{FromByml, ToByml};
 use schemars::{JsonSchema, Schema};
-use serde::Deserialize;
-use std::collections::BTreeMap;
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 use tomolib::formats::byml::Value;
 
-#[derive(Debug, Clone, ToByml, FromByml, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, ToByml, FromByml, Deserialize, Serialize, JsonSchema)]
 #[serde(default)]
 pub struct PartsEntry {
     #[serde(skip)]
@@ -248,6 +248,22 @@ const TEMPLATE_LAYOUT_FIELDS: &[&str] = &[
 ];
 
 impl PartsEntry {
+    pub fn overrides(&self) -> &BTreeSet<String> {
+        &self.origin.manifest_fields
+    }
+
+    pub fn is_overridden(&self, byml_key: &str) -> bool {
+        self.origin.manifest_fields.contains(byml_key)
+    }
+
+    pub fn set_overridden(&mut self, byml_key: &str, overridden: bool) {
+        if overridden {
+            self.origin.manifest_fields.insert(byml_key.to_string());
+        } else {
+            self.origin.manifest_fields.remove(byml_key);
+        }
+    }
+
     pub fn with_category_defaults(
         self,
         index: u32,
@@ -539,7 +555,9 @@ impl PartsEntry {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, JsonSchema, Default,
+)]
 #[serde(rename_all = "camelCase")]
 #[repr(u32)]
 pub enum HairGender {
@@ -572,7 +590,9 @@ impl BymlDecode for HairGender {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, JsonSchema,
+)]
 #[serde(rename_all = "camelCase")]
 #[repr(u32)]
 pub enum HairPartType {
@@ -670,7 +690,9 @@ impl<T: BymlDecode> BymlDecode for BTreeMap<HairPartType, T> {
     }
 }
 
-#[derive(Debug, Clone, ToByml, FromByml, Deserialize, JsonSchema, Default, PartialEq)]
+#[derive(
+    Debug, Clone, ToByml, FromByml, Deserialize, Serialize, JsonSchema, Default, PartialEq,
+)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Vector2f {
     #[byml(default = 0.0)]
@@ -680,7 +702,9 @@ pub struct Vector2f {
     pub y: f32,
 }
 
-#[derive(Debug, Clone, ToByml, FromByml, Deserialize, JsonSchema, Default, PartialEq, Eq)]
+#[derive(
+    Debug, Clone, ToByml, FromByml, Deserialize, Serialize, JsonSchema, Default, PartialEq, Eq,
+)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Vector2i {
     #[byml(default = 0)]
@@ -690,7 +714,9 @@ pub struct Vector2i {
     pub y: i32,
 }
 
-#[derive(Debug, Clone, ToByml, FromByml, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, ToByml, FromByml, Deserialize, Serialize, JsonSchema, PartialEq, Eq, Default,
+)]
 #[serde(rename_all = "camelCase")]
 pub struct PartsModelUnitParam {
     #[byml(skip_none)]
@@ -700,7 +726,9 @@ pub struct PartsModelUnitParam {
     pub phcl: Option<String>,
 }
 
-#[derive(Debug, Clone, ToByml, FromByml, Deserialize, JsonSchema, PartialEq, Eq, Default)]
+#[derive(
+    Debug, Clone, ToByml, FromByml, Deserialize, Serialize, JsonSchema, PartialEq, Eq, Default,
+)]
 #[serde(default)]
 pub struct HairPartsAttachInfo {
     pub editor_lower_icon_name: String,
@@ -712,7 +740,7 @@ pub struct HairPartsAttachInfo {
     pub is_attachable_upper: bool,
 }
 
-#[derive(Debug, Clone, ToByml, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Debug, Clone, ToByml, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ComponentInfo {
     pub confluence_page_info: u32,
