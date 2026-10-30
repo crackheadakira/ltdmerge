@@ -1,10 +1,10 @@
 use crate::linked::{EyeAccessoryParam, LinkedTable};
 use crate::typed_param::{self, BymlDecode, BymlOrigin};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use ltdmerge_derive::{FromByml, ToByml};
 use schemars::{JsonSchema, Schema};
 use serde::Deserialize;
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
 use tomolib::formats::byml::Value;
 
 #[derive(Debug, Clone, ToByml, FromByml, Deserialize, JsonSchema)]
@@ -156,6 +156,9 @@ pub struct PartsEntry {
 
     #[byml(skip)]
     pub template: Option<String>,
+
+    #[byml(skip)]
+    pub id: Option<String>,
 }
 
 impl Default for PartsEntry {
@@ -214,6 +217,7 @@ impl Default for PartsEntry {
             is_ltdmerge_gen: false,
             eye_accessory: None,
             template: None,
+            id: None,
         }
     }
 }
@@ -319,10 +323,11 @@ impl PartsEntry {
 
     pub fn from_byml_map(
         map: &BTreeMap<String, Value>,
-        category_name: &str,
-        _vanilla_max: i32,
+        cat: &dyn CategoryDef,
     ) -> Result<Option<Self>> {
-        if !matches!(map.get("Category"), Some(Value::String(s)) if s == category_name) {
+        if !matches!(map.get("Category"), Some(Value::String(s)) if s == cat.internal_category_name())
+            || !matches!(map.get("FileName"), Some(Value::String(s)) if cat.owns_file_name(s))
+        {
             return Ok(None);
         }
 
@@ -615,29 +620,42 @@ impl HairPartType {
             Self::Unknown(hash) => *hash,
         }
     }
+
+    pub const KNOWN: [Self; 16] = [
+        Self::Right,
+        Self::Both,
+        Self::Left,
+        Self::Center,
+        Self::MiddleLeft,
+        Self::MiddleRight,
+        Self::MiddleBoth,
+        Self::MiddleCenter,
+        Self::LowerBoth,
+        Self::LowerLeft,
+        Self::LowerRight,
+        Self::LowerCenter,
+        Self::UpperBoth,
+        Self::UpperCenter,
+        Self::UpperLeft,
+        Self::UpperRight,
+    ];
+
     fn from_hash(hash: u32) -> Self {
-        let known = [
-            Self::Right,
-            Self::Both,
-            Self::Left,
-            Self::Center,
-            Self::MiddleLeft,
-            Self::MiddleRight,
-            Self::MiddleBoth,
-            Self::MiddleCenter,
-            Self::LowerBoth,
-            Self::LowerLeft,
-            Self::LowerRight,
-            Self::LowerCenter,
-            Self::UpperBoth,
-            Self::UpperCenter,
-            Self::UpperLeft,
-            Self::UpperRight,
-        ];
-        known
+        Self::KNOWN
             .into_iter()
             .find(|k| k.hash_u32() == hash)
             .unwrap_or(Self::Unknown(hash))
+    }
+
+    pub fn file_suffix(&self) -> String {
+        match self {
+            Self::Both => "LeftRight".into(),
+            Self::UpperBoth => "UpperLeftRight".into(),
+            Self::MiddleBoth => "MiddleLeftRight".into(),
+            Self::LowerBoth => "LowerLeftRight".into(),
+            Self::Unknown(hash) => format!("{hash:08X}"),
+            known => format!("{known:?}"),
+        }
     }
 }
 impl<T: BymlDecode> BymlDecode for BTreeMap<HairPartType, T> {
@@ -682,41 +700,7 @@ pub struct PartsModelUnitParam {
     pub phcl: Option<String>,
 }
 
-impl PartsModelUnitParam {
-    pub fn compile_and_finalize(
-        &mut self,
-        target_token: &str,
-        model_folder: &str,
-        folder_name: &str,
-        romfs_files: &mut BTreeMap<String, Vec<u8>>,
-    ) -> Result<()> {
-        if let Some(ref raw_model_source) = self.fmdb {
-            let model_bytes = crate::util::read_and_decompress(Path::new(""), raw_model_source)?;
-            let mut model_bfres = crate::util::bfres_parse(&model_bytes)?;
-
-            let internal_mesh_name = model_bfres
-                .models
-                .names
-                .first()
-                .context("The provided BFRES file contains no internal meshes.")?
-                .clone();
-
-            model_bfres.name = target_token.to_string();
-            let serialized = model_bfres.write().context("BFRES serialization failed")?;
-
-            romfs_files.insert(format!("Model/{target_token}.bfres"), serialized);
-
-            self.fmdb = Some(format!(
-                "Work/Model/Mii/{model_folder}/{folder_name}/output/{internal_mesh_name}.fmdb"
-            ));
-        }
-
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, ToByml, FromByml, Deserialize, JsonSchema, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct HairPartsAttachInfo {
     pub editor_lower_icon_name: String,
@@ -732,6 +716,46 @@ pub struct HairPartsAttachInfo {
 #[serde(rename_all = "camelCase")]
 pub struct ComponentInfo {
     pub confluence_page_info: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderEncoding {
+    Plain,
+    HairBack,
+}
+
+impl OrderEncoding {
+    pub fn decode(self, value: u32) -> (u32, Option<(u32, u32)>) {
+        match self {
+            Self::Plain => (value, None),
+            Self::HairBack => (value >> 16, Some(((value >> 8) & 0xFF, value & 0xFF))),
+        }
+    }
+
+    pub fn encode(self, index: u32, hair_parts: Option<(u32, u32)>) -> u32 {
+        match self {
+            Self::Plain => index,
+            Self::HairBack => {
+                let (parts, slot) = hair_parts.unwrap_or_default();
+                (index << 16) | (parts << 8) | slot
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PartsOrder {
+    pub path: String,
+    pub encoding: OrderEncoding,
+}
+
+impl PartsOrder {
+    pub fn new(name: &str, encoding: OrderEncoding) -> Self {
+        Self {
+            path: format!("Mii/PartsOrder/{name}.mii__PartsOrder.bgyml"),
+            encoding,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -761,7 +785,11 @@ pub trait CategoryDef: Send + Sync {
         None
     }
 
-    fn path_parts_order(&self) -> Option<String>;
+    fn parts_orders(&self) -> Vec<PartsOrder>;
+
+    fn owns_file_name(&self, _file_name: &str) -> bool {
+        true
+    }
     fn pack_path(&self, file_name: &str) -> String;
     fn internal_model_name(&self, index: u32) -> String;
 
@@ -787,6 +815,12 @@ pub trait CategoryDef: Send + Sync {
     }
 
     fn json_schema(&self) -> Schema;
+}
+
+pub fn attach_icon_name(hair_back: &str, hair_parts: &str, slot: char) -> String {
+    let digits = hair_parts.trim_start_matches(|c: char| !c.is_ascii_digit());
+
+    format!("MiiEditor_Face_{hair_back}Parts{digits}_{slot}_Uit")
 }
 
 pub fn str_field(map: &BTreeMap<String, Value>, key: &str) -> String {

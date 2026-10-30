@@ -1,4 +1,4 @@
-use crate::category::{AssetKind, CategoryDef, PartsEntry};
+use crate::category::{AssetKind, CategoryDef, OrderEncoding, PartsEntry, PartsOrder};
 use crate::linked::{EYE_ACCESSORY, LinkedTable};
 use crate::typed_param::murmur32;
 use schemars::Schema;
@@ -15,6 +15,7 @@ pub struct CategorySpec {
     pub vanilla_max: i32,
     pub mask_icon: bool,
     pub order: Option<&'static str>,
+    pub extra_orders: &'static [(&'static str, OrderEncoding)],
     pub linked: &'static [LinkedTable],
 }
 
@@ -31,6 +32,7 @@ impl CategorySpec {
             vanilla_max: max,
             mask_icon: false,
             order: Some(name),
+            extra_orders: &[],
             linked: &[],
         }
     }
@@ -85,15 +87,33 @@ pub const ALL: &[CategorySpec] = &[
     CategorySpec::texture("WrinkleLower", 2, "WrinkleLower00", 14),
     CategorySpec::texture("Mole", 2, "Mole00", 1).unordered(),
     CategorySpec::model("Ear", 2, "MiiEar", "Ear00", 4),
+    CategorySpec::model("Beard", 2, "MiiBeard", "Beard00", 13),
+    CategorySpec::model("Nose", 2, "MiiNose", "Nose00", 32),
+    CategorySpec {
+        mask_icon: true,
+        ..CategorySpec::model("Glass", 2, "MiiGlass", "Glass00", 19)
+    },
     CategorySpec {
         mask_icon: true,
         ..CategorySpec::model("Faceline", 2, "MiiHead", "Faceline00", 21)
     },
     CategorySpec {
         category: "Hair",
+        order: Some("Hair"),
+        extra_orders: &[("HairBack", OrderEncoding::HairBack)],
         ..CategorySpec::model("HairBack", 3, "MiiHairBack", "HairBack006", 340)
     },
+    CategorySpec {
+        category: "Hair",
+        order: Some("Hair"),
+        extra_orders: &[("HairAll", OrderEncoding::Plain)],
+        ..CategorySpec::model("HairAll", 3, "MiiHairAll", "HairAll000", 340)
+    },
     CategorySpec::model("HairFront", 3, "MiiHairFront", "HairFront000", 82),
+    CategorySpec {
+        kind: AssetKind::HairParts,
+        ..CategorySpec::model("HairParts", 3, "MiiHairParts", "HairParts000", 25)
+    },
 ];
 
 impl CategoryDef for CategorySpec {
@@ -144,9 +164,19 @@ impl CategoryDef for CategorySpec {
         format!("Mii/Parts/{file_name}.mii__Parts.bgyml")
     }
 
-    fn path_parts_order(&self) -> Option<String> {
+    fn parts_orders(&self) -> Vec<PartsOrder> {
         self.order
-            .map(|order| format!("Mii/PartsOrder/{order}.mii__PartsOrder.bgyml"))
+            .map(|order| (order, OrderEncoding::Plain))
+            .into_iter()
+            .chain(self.extra_orders.iter().copied())
+            .map(|(name, encoding)| PartsOrder::new(name, encoding))
+            .collect()
+    }
+
+    fn owns_file_name(&self, file_name: &str) -> bool {
+        file_name
+            .strip_prefix(self.stem)
+            .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
     }
 
     fn linked_tables(&self) -> &[LinkedTable] {

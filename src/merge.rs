@@ -1,4 +1,4 @@
-use crate::category::{CategoryDef, i32_field};
+use crate::category::{AssetKind, CategoryDef, OrderEncoding, i32_field};
 use crate::engine::{MiiMergeEngine, rename_resource};
 use crate::linked::{self, LinkedTable};
 use crate::types::CustomModNamespace;
@@ -189,14 +189,46 @@ pub fn run_with_base(
         outputs.insert(PATH_MII_PARTS_PACK.into(), sarc_pack(&entries, &pack)?);
     }
 
+    let mut order_files: BTreeMap<String, (OrderEncoding, Vec<&dyn CategoryDef>)> = BTreeMap::new();
     for cat in &engine.categories {
-        let Some(order_path) = cat.path_parts_order() else {
-            continue;
-        };
+        for order in cat.parts_orders() {
+            order_files
+                .entry(order.path)
+                .or_insert((order.encoding, Vec::new()))
+                .1
+                .push(cat.as_ref());
+        }
+    }
 
+    let hair_parts: Vec<&dyn CategoryDef> = engine
+        .categories
+        .iter()
+        .filter(|c| c.asset_kind() == AssetKind::HairParts)
+        .map(|c| c.as_ref())
+        .collect();
+
+    let allocated = |cats: &[&dyn CategoryDef], id: usize, index: u32| {
+        cats.iter()
+            .find_map(|c| {
+                engine
+                    .allocation_map
+                    .get(&(c.category_name().into(), id, index as i32))
+            })
+            .map_or(index, |new| *new as u32)
+    };
+
+    for (order_path, (encoding, users)) in order_files {
         let rel = format!("romfs/{order_path}");
         let mut template = None;
         let mut order = Vec::new();
+        let mut touched = false;
+
+        let owned = |value: i32| {
+            let (index, _) = encoding.decode(value as u32);
+            engine.allocation_map.iter().any(|((category, _, _), new)| {
+                *new as u32 == index && users.iter().any(|c| c.category_name() == category)
+            })
+        };
 
         if let Some(base) = base.filter(|b| asset_exists(b, &order_path)) {
             let bytes = read_and_decompress(base, &order_path)?;
@@ -210,41 +242,30 @@ pub fn run_with_base(
             }
 
             let bytes = read_and_decompress(dir, &rel)?;
-            let source = parse_parts_order_array(&bytes)?;
-            let mapped: Vec<_> = source
+            touched = true;
+            let mapped: Vec<_> = parse_parts_order_array(&bytes)?
                 .into_iter()
-                .map(|old| {
-                    engine
-                        .allocation_map
-                        .get(&(cat.category_name().into(), id, old))
-                        .copied()
-                        .unwrap_or(old)
+                .map(|value| {
+                    let (index, attached) = encoding.decode(value as u32);
+                    let attached =
+                        attached.map(|(parts, slot)| (allocated(&hair_parts, id, parts), slot));
+                    encoding.encode(allocated(&users, id, index), attached) as i32
                 })
                 .collect();
 
-            let previous_owned: Vec<_> = order
-                .iter()
-                .copied()
-                .filter(|i| {
-                    engine
-                        .allocation_map
-                        .iter()
-                        .any(|((category, _, _), new)| category == cat.category_name() && new == i)
-                })
-                .collect();
-
+            let previous_owned: Vec<_> = order.iter().copied().filter(|v| owned(*v)).collect();
             order = mapped;
 
-            for index in previous_owned {
-                if !order.contains(&index) {
-                    order.push(index);
+            for value in previous_owned {
+                if !order.contains(&value) {
+                    order.push(value);
                 }
             }
 
             template = Some(byml_parse(&bytes)?);
         }
 
-        if let Some(mut doc) = template {
+        if let Some(mut doc) = template.filter(|_| touched) {
             let mut seen = BTreeSet::new();
             order.retain(|i| seen.insert(*i));
 
@@ -341,7 +362,12 @@ pub fn run_with_base(
             }
 
             let mut key = rel.clone();
-            if let Some(stem) = clean_name(&rel)
+
+            if let Some(file) = rel.strip_prefix("Phive/Cloth/")
+                && let Some((stem, rest)) = file.split_once('.')
+            {
+                key = format!("Phive/Cloth/{}.{rest}", rename_resource(stem, &model_names));
+            } else if let Some(stem) = clean_name(&rel)
                 .strip_prefix("Model/")
                 .and_then(|s| s.strip_suffix(".bfres"))
             {

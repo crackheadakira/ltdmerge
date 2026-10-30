@@ -1,5 +1,4 @@
 use crate::category::{CategoryDef, PartsEntry};
-use crate::merge::parse_parts_order_array;
 use crate::util::*;
 use anyhow::Result;
 use std::collections::BTreeMap;
@@ -17,7 +16,6 @@ pub struct CategoryModData {
 pub struct CustomModNamespace {
     pub mod_index: usize,
     pub categories: BTreeMap<String, CategoryModData>,
-    pub custom_order_indices: Vec<(String, i32)>,
     pub custom_icon: Option<Bntx>,
     pub models: BTreeMap<String, Bfres>,
 }
@@ -29,7 +27,6 @@ impl CustomModNamespace {
         categories: &[Box<dyn CategoryDef>],
     ) -> Result<Option<Self>> {
         let mut cat_data_map = BTreeMap::new();
-        let mut custom_order_indices = Vec::new();
         let mut custom_icon = None;
         let mut models = BTreeMap::new();
         let mut has_custom_content = false;
@@ -53,11 +50,9 @@ impl CustomModNamespace {
             for val in arr {
                 if let tomolib::formats::byml::Value::Dict(map) = val {
                     for cat in categories {
-                        if let Some(entry) = crate::category::PartsEntry::from_byml_map(
-                            map,
-                            cat.internal_category_name(),
-                            cat.vanilla_max_parts_index(),
-                        )? {
+                        if let Some(entry) =
+                            crate::category::PartsEntry::from_byml_map(map, cat.as_ref())?
+                        {
                             cat_data_map
                                 .get_mut(cat.category_name())
                                 .unwrap()
@@ -81,11 +76,9 @@ impl CustomModNamespace {
                     let root_map = byml_root_dict(&doc)?;
 
                     for cat in categories {
-                        if let Some(entry) = crate::category::PartsEntry::from_byml_map(
-                            root_map,
-                            cat.internal_category_name(),
-                            cat.vanilla_max_parts_index(),
-                        )? {
+                        if let Some(entry) =
+                            crate::category::PartsEntry::from_byml_map(root_map, cat.as_ref())?
+                        {
                             cat_data_map
                                 .get_mut(cat.category_name())
                                 .unwrap()
@@ -94,33 +87,6 @@ impl CustomModNamespace {
                             has_custom_content = true;
                             break;
                         }
-                    }
-                }
-            }
-        }
-
-        for cat in categories {
-            let Some(order_path) = cat.path_parts_order() else {
-                continue;
-            };
-
-            let order_path = Path::new("romfs").join(order_path);
-
-            if mod_dir.join(&order_path).exists() {
-                let bytes = read_and_decompress(mod_dir, order_path.to_str().unwrap())?;
-                let indices = parse_parts_order_array(&bytes)?;
-
-                for idx in indices {
-                    if cat_data_map[cat.category_name()]
-                        .rstbl_entries
-                        .iter()
-                        .any(|entry| entry.parts_index == idx)
-                        || cat_data_map[cat.category_name()]
-                            .pack_parts
-                            .contains_key(&idx)
-                    {
-                        custom_order_indices.push((cat.category_name().to_string(), idx));
-                        has_custom_content = true;
                     }
                 }
             }
@@ -181,7 +147,6 @@ impl CustomModNamespace {
         Ok(Some(Self {
             mod_index,
             categories: cat_data_map,
-            custom_order_indices,
             custom_icon,
             models,
         }))
