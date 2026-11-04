@@ -1,0 +1,495 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PartsEntry",
+  "type": "object",
+  "properties": {
+    "axis_for_expression": {
+      "$ref": "#/$defs/Vector2f",
+      "default": {
+        "x": 0.0,
+        "y": 0.0
+      }
+    },
+    "baby_hair_name_father_female": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "baby_hair_name_father_male": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "baby_hair_name_mother_female": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "baby_hair_name_mother_male": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "category": {
+      "type": "string",
+      "default": ""
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "default": {}
+    },
+    "components_hash": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "format": "uint32",
+        "minimum": 0
+      },
+      "default": {}
+    },
+    "default_aspect": {
+      "type": "integer",
+      "format": "int32",
+      "default": 3
+    },
+    "default_scale": {
+      "type": "integer",
+      "format": "int32",
+      "default": 0
+    },
+    "default_trans_x": {
+      "type": "integer",
+      "format": "int32",
+      "default": 0
+    },
+    "default_trans_y": {
+      "type": "integer",
+      "format": "int32",
+      "default": 0
+    },
+    "editor_icon_name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "editor_mask_icon_name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "eye_accessory": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EyeAccessoryParam"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "file_name": {
+      "type": "string",
+      "default": ""
+    },
+    "flipped_model_unit": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PartsModelUnitParam"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "flipped_model_unit_for_hat": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PartsModelUnitParam"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "hair_gender": {
+      "$ref": "#/$defs/HairGender",
+      "default": "both"
+    },
+    "hair_parts_attach_info": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/HairPartsAttachInfo"
+      }
+    },
+    "hair_parts_model_unit": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/PartsModelUnitParam"
+      },
+      "default": {}
+    },
+    "hair_parts_model_unit_for_hat": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/PartsModelUnitParam"
+      },
+      "default": {}
+    },
+    "id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "is_attachable_hair_front": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_attachable_hair_parts_lower": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_attachable_hair_parts_middle": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_attachable_hair_parts_upper": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_enable_mouth_lip_default": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_flippable": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_ltdmerge_gen": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_mouth_open": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_selectable_color": {
+      "type": "boolean",
+      "default": true
+    },
+    "is_selectable_sub_color": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_use_hair_parts_model": {
+      "type": "boolean",
+      "default": false
+    },
+    "is_visible_in_editor": {
+      "type": "boolean",
+      "default": false
+    },
+    "max_trans_x": {
+      "type": "integer",
+      "format": "int32",
+      "default": 18
+    },
+    "max_trans_y": {
+      "type": "integer",
+      "format": "int32",
+      "default": 31
+    },
+    "min_trans_y": {
+      "type": "integer",
+      "format": "int32",
+      "default": 0
+    },
+    "model_unit": {
+      "$ref": "#/$defs/PartsModelUnitParam",
+      "default": {
+        "fmdb": null,
+        "phcl": null
+      }
+    },
+    "model_unit_for_hat": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PartsModelUnitParam"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "no_lip_texture_name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "offset_rotate": {
+      "type": "integer",
+      "format": "int32",
+      "default": 0
+    },
+    "parts_index": {
+      "type": "integer",
+      "format": "int32",
+      "default": -1
+    },
+    "parts_type": {
+      "type": "integer",
+      "format": "uint32",
+      "default": 0,
+      "minimum": 0
+    },
+    "rotate_axis": {
+      "$ref": "#/$defs/Vector2f",
+      "default": {
+        "x": 0.0,
+        "y": 0.0
+      }
+    },
+    "row_id": {
+      "type": "string",
+      "default": ""
+    },
+    "size_for_expression": {
+      "type": "number",
+      "format": "float",
+      "default": 1.0
+    },
+    "template": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "texture_name": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "use_texture_color": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "$defs": {
+    "EyeAccessoryParam": {
+      "type": "object",
+      "properties": {
+        "eyelash_lower": {
+          "$ref": "#/$defs/EyeAccessoryPart"
+        },
+        "eyelash_upper": {
+          "$ref": "#/$defs/EyeAccessoryPart"
+        },
+        "eyelid_lower": {
+          "$ref": "#/$defs/EyeAccessoryPart"
+        },
+        "eyelid_upper": {
+          "$ref": "#/$defs/EyeAccessoryPart"
+        },
+        "eyeline_default_enable": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "highlight": {
+          "$ref": "#/$defs/EyeAccessoryPart"
+        },
+        "template": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "EyeAccessoryPart": {
+      "type": "object",
+      "properties": {
+        "aspect": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "default": null
+        },
+        "default_parts_index": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "default": null
+        },
+        "pos": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Vector2i"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rotate": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "default": null
+        },
+        "scale": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32",
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "HairGender": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "both",
+            "male",
+            "female"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "unknown": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "unknown"
+          ]
+        }
+      ]
+    },
+    "HairPartsAttachInfo": {
+      "type": "object",
+      "properties": {
+        "editor_lower_icon_name": {
+          "type": "string",
+          "default": ""
+        },
+        "editor_middle_icon_name": {
+          "type": "string",
+          "default": ""
+        },
+        "editor_upper_icon_name": {
+          "type": "string",
+          "default": ""
+        },
+        "hair_parts_name": {
+          "type": "string",
+          "default": ""
+        },
+        "is_attachable_lower": {
+          "type": "boolean",
+          "default": false
+        },
+        "is_attachable_middle": {
+          "type": "boolean",
+          "default": false
+        },
+        "is_attachable_upper": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "PartsModelUnitParam": {
+      "type": "object",
+      "properties": {
+        "fmdb": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phcl": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "Vector2f": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0
+        },
+        "y": {
+          "type": "number",
+          "format": "float",
+          "default": 0.0
+        }
+      }
+    },
+    "Vector2i": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "integer",
+          "format": "int32",
+          "default": 0
+        },
+        "y": {
+          "type": "integer",
+          "format": "int32",
+          "default": 0
+        }
+      }
+    }
+  }
+}

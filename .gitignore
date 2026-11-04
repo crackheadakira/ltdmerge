@@ -3,3 +3,4 @@ mods/
 *.bfres*
 *.png
 *.json
+!schema/*.json
